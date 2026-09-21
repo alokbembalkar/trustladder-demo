@@ -108,15 +108,13 @@ def verdict_view(r: LadderResult, pdf_bytes: bytes, next_step: str = "", show_gr
 
 
 def architecture_diagram() -> None:
-    """The layered AI architecture from architecture.json (same source as the deck)."""
-    def layer_html(layer: dict, found: bool = False) -> str:
-        comps = "".join(f'<div class="tl-comp {"built" if c["built"] else "target"}">{c["label"]}</div>'
-                        for c in layer["components"])
-        sub = f'<span>{layer["sub"]}</span>' if layer.get("sub") else ""
-        return (f'<div class="tl-layer{" found" if found else ""}">'
-                f'<div class="tl-lname">{layer["name"]}{sub}</div>{comps}</div>')
-    html = "".join(layer_html(l) for l in ARCH["layers"]) + layer_html(ARCH["foundation"], True)
-    st.markdown(f'<div data-testid="tl-architecture">{html}</div>', unsafe_allow_html=True)
+    """The architecture drawing (trustladder/diagram.py), the same one as slide 5 of the deck."""
+    import base64
+    from trustladder.diagram import build_svg
+    svg = build_svg()
+    uri = "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
+    st.markdown(f'<div data-testid="tl-architecture"><img src="{uri}" style="width:100%" '
+                f'alt="TrustLadder architecture diagram"/></div>', unsafe_allow_html=True)
     comps = [c for l in ARCH["layers"] + [ARCH["foundation"]] for c in l["components"]]
     built = [c["label"] for c in comps if c["built"]]
     target = [c["label"] for c in comps if not c["built"]]

@@ -287,16 +287,20 @@ def test_tc51_sample_bills_show_expected_verdicts(index):
 
 def test_tc52_auditor_sees_rule_and_architecture():
     """TC-52. Steps: auditor → How decisions are made.
-    Expected: rules R0-R8 listed; every architecture component drawn solid when
-    built and dashed when target, exactly as architecture.json says."""
+    Expected: rules R0-R8 listed; the architecture diagram draws every component
+    in architecture.json, solid when built and dashed when target."""
     at = _go(_login("auditor"), "auditor", "How decisions are made")
     texts = _texts(at)
     for rid in [f"R{i}" for i in range(9)]:
         assert f"<b>{rid}</b>" in texts
     html = next(m.value for m in at.markdown if 'data-testid="tl-architecture"' in m.value)
+    import base64
+    from html import escape
+    svg = base64.b64decode(html.split("base64,")[1].split('"')[0]).decode()
     for layer in SPEC["layers"] + [SPEC["foundation"]]:
         for c in layer["components"]:
-            assert f'<div class="tl-comp {"built" if c["built"] else "target"}">{c["label"]}</div>' in html
+            cls = "built" if c["built"] else "target"
+            assert f'<g class="comp {cls}" data-label="{escape(c["label"])}">' in svg, c["label"]
 
 
 def test_tc53_verdict_view_has_ai_inside_and_evidence_graph():
