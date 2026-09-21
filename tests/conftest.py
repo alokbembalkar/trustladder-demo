@@ -17,12 +17,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pytest  # noqa: E402
 
-from trustladder.cases import DATA_DIR, build_all  # noqa: E402
+from trustladder.cases import DATA_DIR  # noqa: E402
+from trustladder.seed import build_and_snapshot  # noqa: E402
 
 
 @pytest.fixture(scope="session", autouse=True)
 def demo_world():
     """Build the full demo world once per test session."""
     assert str(DATA_DIR).startswith(str(_TMP)), "tests must never use the live demo data"
-    build_all(DATA_DIR)
+    build_and_snapshot(DATA_DIR)
     yield DATA_DIR

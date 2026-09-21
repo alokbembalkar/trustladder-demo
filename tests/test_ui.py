@@ -1,29 +1,67 @@
 """
-Screen test cases (TC-20 .. TC-29), run against the real app script with
-Streamlit's headless AppTest. They assert what a viewer would see: tab labels,
-verdict banners, the review queue, the audit trail, the hospital flow, the
-registry forgery check and the policy metrics.
+Screen test cases for the role-based app (TC-40 .. TC-53), run against the real
+app script with Streamlit's headless AppTest. Every test starts from the seeded
+sample world (restored from its snapshot), so tests never depend on each other.
 
-Real-browser checks of the same surfaces are in tools/shots.py (TC-30).
+Real-browser checks of the same surfaces are in tools/record_demo.py (TC-30,
+local) and the live-site check (TC-31).
 """
 
 import json
 import re
+import sqlite3
 from pathlib import Path
 
 import pytest
+import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 from trustladder.cases import DATA_DIR
+from trustladder.registry import RegistryStore, Verifier
+from trustladder.seed import DEMO_PASSWORD, db_path, restore_snapshot
+from trustladder.service import submit_claim
+from trustladder.store import Store
 
 APP = str(Path(__file__).resolve().parent.parent / "app.py")
+SPEC = json.loads((Path(APP).parent / "trustladder" / "architecture.json").read_text())
+
+MENUS = {
+    "hospital": ["My bills", "Issue a bill"],
+    "customer": ["My claims", "Submit a claim"],
+    "officer": ["Claims inbox", "All claims", "Try a sample bill"],
+    "riskhead": ["Impact dashboard", "Simulated month"],
+    "registry": ["Network", "Integrity check"],
+    "auditor": ["Audit trail", "How decisions are made"],
+}
 
 
-def _app():
-    return AppTest.from_file(APP, default_timeout=90).run()
+@pytest.fixture(autouse=True)
+def fresh_world():
+    """Every screen test starts from the seeded sample world."""
+    restore_snapshot(DATA_DIR)
+    st.cache_resource.clear()
+    st.cache_data.clear()
+    yield
 
 
-def _verdict_shown(at) -> str:
+def _login(user_id: str, password: str = DEMO_PASSWORD) -> AppTest:
+    at = AppTest.from_file(APP, default_timeout=120).run()
+    at.text_input(key="login_user").input(user_id)
+    at.text_input(key="login_pw").input(password)
+    next(b for b in at.button if b.label == "Sign in").click().run()
+    return at
+
+
+def _go(at: AppTest, role: str, page: str) -> AppTest:
+    at.radio(key=f"nav_{role}").set_value(page).run()
+    return at
+
+
+def _texts(at: AppTest) -> str:
+    return " ".join(m.value for m in at.markdown) + " " + " ".join(c.value for c in at.caption)
+
+
+def _verdict(at: AppTest) -> str:
     for m in at.markdown:
         hit = re.search(r'data-testid="tl-verdict">([A-Za-z]+)<', m.value)
         if hit:
@@ -31,163 +69,263 @@ def _verdict_shown(at) -> str:
     return ""
 
 
-def test_tc20_app_loads_with_five_tabs():
-    """TC-20. Steps: open the app.
-    Expected: no exception; six tabs with the labels the script uses."""
-    at = _app()
+def _store() -> Store:
+    return Store(db_path(DATA_DIR))
+
+
+# ---------------------------------------------------------------- login
+
+def test_tc40_login_page_and_wrong_password():
+    """TC-40. Steps: open the app; sign in with a wrong password; then an unknown user.
+    Expected: login page shows the logo and a Sign in form, no menu; both bad
+    attempts show 'do not match' and stay on the login page."""
+    at = AppTest.from_file(APP, default_timeout=120).run()
     assert not at.exception
-    assert [t.label for t in at.tabs] == ["1 · Check a bill", "2 · Human review",
-                                          "3 · Hospital (issuer)", "4 · Registry",
-                                          "5 · Policy & impact", "6 · AI architecture"]
+    assert any("TrustLadder logo" in m.value for m in at.markdown)
+    assert not [r for r in at.radio if (r.key or "").startswith("nav_")]
+    for uid, pw in (("officer", "wrong-password"), ("nobody", DEMO_PASSWORD)):
+        at = _login(uid, pw)
+        assert any("do not match" in e.value for e in at.error)
+        assert "user" not in at.session_state
+
+
+def test_tc41_each_role_lands_on_its_own_home_with_its_own_menu():
+    """TC-41. Steps: sign in as each of the six role users.
+    Expected: no exception; the menu holds exactly that role's items; the first
+    page is the role's home; the sidebar shows the role badge."""
+    homes = {"hospital": "My bills", "customer": "Hello, Meera", "officer": "Claims inbox",
+             "riskhead": "Impact dashboard", "registry": "Network", "auditor": "Audit trail"}
+    for role, items in MENUS.items():
+        at = _login(role)
+        assert not at.exception, role
+        assert at.radio(key=f"nav_{role}").options == items, role
+        assert homes[role] in _texts(at), role
+        assert 'class="tl-role"' in _texts(at)
+
+
+def test_tc42_role_isolation():
+    """TC-42. Steps: sign in as the customer, then as the hospital.
+    Expected: the customer sees only Meera's own claims (3) and no officer or
+    risk pages; the hospital's screens never show a claim or who checked a bill."""
+    at = _login("customer")
+    assert _texts(at).count("claim CLM-") == 3
+    for other in ("Claims inbox", "Impact dashboard", "Audit trail", "Network"):
+        assert other not in at.radio(key="nav_customer").options
+    at = _login("hospital")
+    assert "CLM-" not in _texts(at)
+    assert "do not see who checked" in _texts(at)
+
+
+def test_tc43_sign_out():
+    """TC-43. Steps: sign in as the auditor, press Sign out.
+    Expected: back on the login page, session cleared."""
+    at = _login("auditor")
+    at.button(key="logout").click().run()
+    assert "user" not in at.session_state
+    assert any(b.label == "Sign in" for b in at.button)
+
+
+# ---------------------------------------------------------------- the cross-role story
+
+def test_tc44_hospital_to_customer_to_officer_to_auditor():
+    """TC-44. Steps: the hospital issues a bill to Meera; Meera submits it as a
+    claim; the officer opens All claims; the auditor searches the trail.
+    Expected: the bill appears in Meera's documents; the claim is Paid on proof
+    (Authentic); the officer's list shows it; the auditor sees the issue and the
+    verdict events."""
+    at = _go(_login("hospital"), "hospital", "Issue a bill")
+    patient = at.selectbox(key="h_patient")
+    patient.select_index(patient.options.index("Meera Kulkarni (Pune)")).run()
+    at.button(key="h_issue").click().run()
+    assert not at.exception
+    ok = next(s.value for s in at.success if "Ticket printed on the bill" in s.value)
+    bill_no = re.search(r"Issued (\S+)", ok).group(1)
+
+    at = _go(_login("customer"), "customer", "Submit a claim")
+    option = next(o for o in at.radio(key="cs_pick").options if o.startswith(bill_no))
+    at.radio(key="cs_pick").set_value(option).run()
+    at.button(key="cs_submit").click().run()
+    claim = _store().claim(at.session_state["cs_last"])
+    assert claim["verdict"] == "Authentic" and claim["status"] == "Paid"
+    assert "Paid" in _texts(at)
+
+    at = _go(_login("officer"), "officer", "All claims")
+    assert claim["claim_id"] in at.dataframe[0].value["Claim"].tolist()
+
+    at = _login("auditor")
+    at.text_input(key="aud_q").input(claim["claim_id"]).run()
+    events = at.dataframe[0].value["Event"].tolist()
+    assert "Claim submitted" in events and "Authentic (R1)" in events
+    assert any(e["event"] == "Bill issued and published" for e in _store().audit())
+
+
+def test_tc45_customer_sends_clearer_copy():
+    """TC-45. Steps: Meera opens My claims; for the claim waiting on her, picks
+    the Arogya bill from her documents and presses Send clearer copy.
+    Expected: that claim is re-judged Authentic and shows Paid; the trail logs
+    'Clearer copy re-submitted'."""
+    waiting = _store().claims(customer_id="CUST-001", statuses=("Waiting for customer",))
+    assert len(waiting) == 1
+    cid = waiting[0]["claim_id"]
+    at = _login("customer")
+    sel = at.selectbox(key=f"cc_pick_{cid}")
+    sel.set_value(next(o for o in sel.options if "Arogya" in o)).run()
+    at.button(key=f"cc_send_{cid}").click().run()
+    after = _store().claim(cid)
+    assert after["verdict"] == "Authentic" and after["status"] == "Paid"
+    assert any(e["event"] == "Clearer copy re-submitted" for e in _store().audit())
+
+
+def test_tc46_officer_decision_moves_the_numbers():
+    """TC-46. Steps: the officer opens the first claim in the inbox (on hold) and
+    presses 'Fraud: reject and refer'.
+    Expected: the claim becomes Rejected; the risk head's 'rejected' count rises
+    by one; the audit trail records the decision next to the machine verdict."""
+    before = _store().measures()["rejected"]
+    at = _login("officer")
+    first = at.selectbox(key="inbox_pick").value
+    cid = first.split(" · ")[0]
+    assert "On hold" in first
+    at.button(key=f"dec_reject_{cid}").click().run()
+    assert _store().claim(cid)["status"] == "Rejected"
+    assert _store().measures()["rejected"] == before + 1
+    at = _login("riskhead")
+    assert f'<div class="v">{before + 1}</div><div class="l">rejected as fraud after review' in _texts(at)
+    ev = [e for e in _store().audit() if e["claim_id"] == cid]
+    assert any(e["event"] == "Rejected and referred to investigation" and "machine verdict was" in e["detail"]
+               for e in ev)
+
+
+def test_tc47_risk_policy_change_routes_new_claims():
+    """TC-47. Steps: the risk head sets Inconclusive → 'Ask customer for original';
+    a genuine bill from a hospital that has not joined is then submitted.
+    Expected: 'Pay' is never offered for non-Authentic verdicts; the policy
+    change is logged; the new claim is Inconclusive and 'Waiting for customer'."""
+    at = _login("riskhead")
+    for v in ("Suspicious", "Tampered", "Inconclusive"):
+        assert "Pay" not in at.selectbox(key=f"pol_{v}").options
+    at.selectbox(key="pol_Inconclusive").set_value("Ask customer for original").run()
+    assert _store().policy()["Inconclusive"] == "Ask customer for original"
+    assert any(e["event"].startswith("Policy: Inconclusive") for e in _store().audit())
+    pdf = (DATA_DIR / "showcase" / "04_genuine_shanti_not_joined.pdf").read_bytes()
+    cid = submit_claim(_store(), Verifier(RegistryStore(DATA_DIR)), "CUST-001", pdf, "shanti.pdf")
+    c = _store().claim(cid)
+    assert c["verdict"] == "Inconclusive" and c["status"] == "Waiting for customer"
+
+
+def test_tc48_registry_enrol_and_integrity():
+    """TC-48. Steps: the registry operator enrols Shanti Clinic; opens Integrity
+    check; inserts a forged entry.
+    Expected: '4 of 5' hospitals joined; 'Patient data held' is None everywhere;
+    every signature Valid; the forged entry is rejected."""
+    at = _login("registry")
+    at.selectbox(key="enrol_pick").set_value("IN-HOSP-SHANTI-STR-0419").run()
+    at.button(key="enrol").click().run()
+    assert "4 of 5" in _texts(at)
+    assert set(at.dataframe[0].value["Patient data held"]) == {"None"}
+    at = _go(at, "registry", "Integrity check")
+    assert set(at.dataframe[0].value["Signature"]) == {"Valid"}
+    at.button(key="forge").click().run()
+    assert any(s.value.startswith("Rejected: the hospital's signature") for s in at.success)
+
+
+# ---------------------------------------------------------------- sample data, presenter, carried-over checks
+
+def test_tc49_sample_data_is_complete_and_consistent():
+    """TC-49. Steps: read the seeded world.
+    Expected: 34 claims, 16 paid on proof, 1 wrongful hold, 8 known frauds with
+    0 paid automatically, 15 customers, 7 working logins; every joined hospital's
+    ledger matches what the registry covers."""
+    s = _store()
+    m = s.measures()
+    assert (m["claims"], m["auto_paid"], m["wrongful_holds"]) == (34, 16, 1)
+    assert m["sample_frauds"] == 8 and m["sample_frauds_paid"] == 0
+    assert len(s.customers()) == 15
+    for uid in ("hospital", "customer", "officer", "riskhead", "registry", "auditor", "presenter"):
+        assert s.authenticate(uid, DEMO_PASSWORD), uid
+    reg = RegistryStore(DATA_DIR)
+    c = sqlite3.connect(db_path(DATA_DIR))
+    for iid in reg.load_directory():
+        covered = sum(b["count"] for b in reg.load_file(iid)["batches"])
+        ledger = c.execute("SELECT COUNT(*) FROM bills WHERE issuer_id=? AND published=1", (iid,)).fetchone()[0]
+        assert covered == ledger, iid
+
+
+def test_tc50_presenter_switches_roles_and_resets():
+    """TC-50. Steps: sign in as presenter; view as hospital, then customer; submit
+    a claim; press Reset demo.
+    Expected: the menu follows the chosen role; after Reset the world is back to
+    34 claims."""
+    at = _login("presenter")
+    at.selectbox(key="acting").set_value("hospital").run()
+    assert at.radio(key="nav_hospital").options == MENUS["hospital"]
+    at = _go(at, "hospital", "Issue a bill")
+    patient = at.selectbox(key="h_patient")
+    patient.select_index(patient.options.index("Meera Kulkarni (Pune)")).run()
+    at.button(key="h_issue").click().run()
+    at.selectbox(key="acting").set_value("customer").run()
+    assert at.radio(key="nav_customer").options == MENUS["customer"]
+    at = _go(at, "customer", "Submit a claim")
+    at.button(key="cs_submit").click().run()          # newest document = the bill just issued
+    assert _store().measures()["claims"] == 35
+    at.button(key="reset").click().run()
+    assert _store().measures()["claims"] == 34
 
 
 @pytest.mark.parametrize("index", range(6))
-def test_tc21_each_demo_bill_shows_its_expected_verdict(index):
-    """TC-21 (x6). Steps: pick demo bill N, press 'Run it up the ladder'.
-    Expected: the verdict banner shows the manifest's expected verdict, and a
-    'Reason.' paragraph is shown."""
+def test_tc51_sample_bills_show_expected_verdicts(index):
+    """TC-51 (x6). Steps: officer → Try a sample bill → pick bill N → Run.
+    Expected: the verdict banner shows the manifest's expected verdict."""
     manifest = json.loads((DATA_DIR / "showcase" / "manifest.json").read_text())
-    at = _app()
+    at = _go(_login("officer"), "officer", "Try a sample bill")
     sel = at.selectbox(key="showcase_pick")
     sel.set_value(sel.options[index]).run()
     at.button(key="run").click().run()
     assert not at.exception
-    assert _verdict_shown(at) == manifest[index]["expected"]
-    assert any(m.value.startswith("**Reason.**") for m in at.markdown)
+    assert _verdict(at) == manifest[index]["expected"]
 
 
-def test_tc22_review_queue_and_audit_trail():
-    """TC-22. Steps: run demo bill 2 (Tampered) and bill 1 (Authentic); in the
-    review tab press 'Fraud: reject and refer' on the queued item.
-    Expected: only bill 2 is queued; its status becomes 'Rejected and referred to
-    investigation'; the audit trail holds the machine row and the officer row."""
-    at = _app()
+def test_tc52_auditor_sees_rule_and_architecture():
+    """TC-52. Steps: auditor → How decisions are made.
+    Expected: rules R0-R8 listed; every architecture component drawn solid when
+    built and dashed when target, exactly as architecture.json says."""
+    at = _go(_login("auditor"), "auditor", "How decisions are made")
+    texts = _texts(at)
+    for rid in [f"R{i}" for i in range(9)]:
+        assert f"<b>{rid}</b>" in texts
+    html = next(m.value for m in at.markdown if 'data-testid="tl-architecture"' in m.value)
+    for layer in SPEC["layers"] + [SPEC["foundation"]]:
+        for c in layer["components"]:
+            assert f'<div class="tl-comp {"built" if c["built"] else "target"}">{c["label"]}</div>' in html
+
+
+def test_tc53_verdict_view_has_ai_inside_and_evidence_graph():
+    """TC-53. Steps: officer → Try a sample bill → bill 2 → Run.
+    Expected: stage cards in the order Detect, Decide, Verify, Human review, each
+    with its 'AI inside' line; '4 independent lines against'; an evidence graph
+    naming R2 and Tampered; the reason labelled as a template (GraphRAG = target)."""
+    at = _go(_login("officer"), "officer", "Try a sample bill")
     sel = at.selectbox(key="showcase_pick")
     sel.set_value(sel.options[1]).run()
-    at.button(key="run").click().run()
-    sel = at.selectbox(key="showcase_pick")
-    sel.set_value(sel.options[0]).run()
-    at.button(key="run").click().run()
-    queue = at.session_state["queue"]
-    assert [q["file"] for q in queue] == ["02_altered_total_sahyog.pdf"]
-    at.button(key="rej_0").click().run()
-    assert at.session_state["queue"][0]["status"] == "Rejected and referred to investigation"
-    actors = [row["actor"] for row in at.session_state["audit"]]
-    assert "Claims officer (demo)" in actors and any(a.startswith("TrustLadder") for a in actors)
-
-
-def test_tc23_hospital_issue_then_check_genuine_and_altered():
-    """TC-23. Steps: in the hospital tab press 'Issue bill and publish', then
-    'Check the genuine bill', then 'Alter the total and check it'.
-    Expected: success message quoting the ticket; genuine -> Authentic;
-    altered -> Tampered."""
-    at = _app()
-    at.button(key="h_issue").click().run()
-    assert any("Ticket printed on the bill" in s.value for s in at.success)
-    at.button(key="h_check_genuine").click().run()
-    assert at.session_state["h_result"][0].verdict.value == "Authentic"
-    at.button(key="h_check_altered").click().run()
-    assert at.session_state["h_result"][0].verdict.value == "Tampered"
-    assert not at.exception
-
-
-def test_tc24_registry_rejects_forged_entry():
-    """TC-24. Steps: in the registry tab press 'Insert a forged entry'.
-    Expected: the green 'Rejected: the hospital's signature no longer matches'
-    message; the directory table shows 'Patient data held' = None for every row."""
-    at = _app()
-    at.button(key="forge").click().run()
-    assert any(s.value.startswith("Rejected: the hospital's signature") for s in at.success)
-    table = next(d.value for d in at.dataframe if "Patient data held" in d.value.columns)
-    assert set(table["Patient data held"]) == {"None"}
-    assert set(table["Joined"]) == {"Yes", "No"}
-
-
-def test_tc25_policy_tab_guarantee_and_scenarios():
-    """TC-25. Steps: open the policy tab; inspect the Suspicious policy options;
-    switch the coverage scenario from '0 of 5' to '4 of 5'.
-    Expected: 'Pay' is not offered for Suspicious/Tampered/Inconclusive; 'Frauds
-    paid' shows 0; the straight-through figure rises with coverage."""
-    at = _app()
-    for v in ("Suspicious", "Tampered", "Inconclusive"):
-        assert "Pay" not in at.selectbox(key=f"pol_{v}").options
-    def metric(label):
-        return next(m.value for m in at.metric if m.label == label)
-    at.radio(key="scenario").set_value("0 of 5 hospitals joined").run()
-    low = int(metric("Paid straight through").rstrip("%"))
-    assert metric("Frauds paid") == "0"
-    at.radio(key="scenario").set_value("4 of 5 hospitals joined").run()
-    high = int(metric("Paid straight through").rstrip("%"))
-    assert metric("Frauds paid") == "0"
-    assert high > low
-
-
-def test_tc26_reset_restores_clean_state():
-    """TC-26. Steps: run bill 2 (queues it), then press 'Reset demo'.
-    Expected: queue and audit trail are empty; the six demo bills still exist
-    and bill 1 is still Authentic after the rebuild."""
-    at = _app()
-    sel = at.selectbox(key="showcase_pick")
-    sel.set_value(sel.options[1]).run()
-    at.button(key="run").click().run()
-    assert at.session_state["queue"]
-    at.button(key="reset").click().run()
-    assert at.session_state["queue"] == [] and at.session_state["audit"] == []
-    at.button(key="run").click().run()
-    assert _verdict_shown(at) == "Tampered"  # bill 2 is still selected after the reset
-    sel = at.selectbox(key="showcase_pick")
-    sel.set_value(sel.options[0]).run()
-    at.button(key="run").click().run()
-    assert _verdict_shown(at) == "Authentic"
-
-
-def test_tc27_stage_order_matches_the_proposal():
-    """TC-27. Steps: run demo bill 1; read the stage-card titles and the header.
-    Expected: stages appear in the proposal's and panel's order:
-    Detect, Decide, Verify, Human review (header and cards agree)."""
-    at = _app()
     at.button(key="run").click().run()
     titles = [re.search(r'tl-stage-title">(.+?)<', m.value).group(1)
-              for m in at.markdown if 'tl-stage-title' in m.value and '<div' in m.value]
-    assert [t.split(" · ")[1].split(" (")[0] for t in titles] == ["Detect", "Decide", "Verify",
-                                                                  "Human review"]
-    assert any("Detect → Decide → Verify → Human review" in m.value for m in at.markdown)
-
-
-def test_tc28_architecture_tab_matches_the_shared_spec():
-    """TC-28. Steps: open the AI architecture tab.
-    Expected: every component in architecture.json is drawn, solid when built and
-    dashed when target; the tagline in the header is the spec's tagline; the
-    built/target counts shown add up to the spec."""
-    spec = json.loads((Path(APP).parent / "trustladder" / "architecture.json").read_text())
-    at = _app()
-    html = next(m.value for m in at.markdown if 'data-testid="tl-architecture"' in m.value)
-    comps = [c for layer in spec["layers"] + [spec["foundation"]] for c in layer["components"]]
-    for c in comps:
-        cls = "built" if c["built"] else "target"
-        assert f'<div class="tl-comp {cls}">{c["label"]}</div>' in html, c["label"]
-    assert any(spec["tagline"] in m.value for m in at.markdown)
-    built = sum(c["built"] for c in comps)
-    assert any(m.value == f"**Built in this demo ({built})**" for m in at.markdown)
-    assert any(m.value == f"**Target design ({len(comps) - built})**" for m in at.markdown)
-
-
-def test_tc29_stage_cards_carry_ai_inside_and_evidence_graph():
-    """TC-29. Steps: run demo bill 2 (altered total).
-    Expected: each stage card shows its 'AI inside (target design)' line from the
-    spec; the Decide card shows '4 independent lines against'; an evidence graph
-    is drawn containing the rule id R2 and the verdict Tampered; the reason is
-    labelled as a template with GraphRAG as the target design."""
-    spec = json.loads((Path(APP).parent / "trustladder" / "architecture.json").read_text())
-    at = _app()
-    sel = at.selectbox(key="showcase_pick")
-    sel.set_value(sel.options[1]).run()
-    at.button(key="run").click().run()
-    for name, stage in spec["stages"].items():
-        assert any(stage["ai_inside"] in m.value for m in at.markdown), name
-    assert any("4 independent lines against" in m.value for m in at.markdown)
-    graphs = at.get("graphviz_chart")
-    assert graphs, "no evidence graph drawn"
-    dot = graphs[0].proto.spec
+              for m in at.markdown if 'tl-stage-title">' in m.value]
+    assert [t.split(" · ")[1].split(" (")[0] for t in titles] == ["Detect", "Decide", "Verify", "Human review"]
+    for stage in SPEC["stages"].values():
+        assert stage["ai_inside"] in _texts(at)
+    assert "4 independent lines against" in _texts(at)
+    dot = at.get("graphviz_chart")[0].proto.spec
     assert "R2" in dot and "Tampered" in dot
     assert any("GraphRAG" in c.value and "template" in c.value for c in at.caption)
+
+
+def test_tc54_duplicate_claim_is_refused():
+    """TC-54. Steps: Meera picks a bill she has already claimed and presses Submit.
+    Expected: a warning names the bill as already claimed; no new claim is created."""
+    before = _store().measures()["claims"]
+    at = _go(_login("customer"), "customer", "Submit a claim")
+    option = next(o for o in at.radio(key="cs_pick").options if "already claimed" in o)
+    at.radio(key="cs_pick").set_value(option).run()
+    at.button(key="cs_submit").click().run()
+    assert any("already been claimed" in w.value for w in at.warning)
+    assert _store().measures()["claims"] == before

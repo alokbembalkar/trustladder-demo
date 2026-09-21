@@ -21,15 +21,34 @@ about a minute to wake it.
 The script uses its own isolated Python environment (`.venv`, Python 3.12 via
 `uv`). It shares nothing with any other project on the machine and uses port 8765.
 
-## What is on screen
+## Sign in
 
-| Tab | Shows |
-|---|---|
-| 1 Check a bill | Six prepared bills (or upload a PDF) run through the ladder |
-| 2 Human review | Every non-Authentic verdict, the officer's decision, the audit trail |
-| 3 Hospital | Issue a bill: random ticket printed, two codes published and signed |
-| 4 Registry | What the registry holds (codes only) and a forged-entry attempt being rejected |
-| 5 Policy & impact | A simulated month at three coverage levels, the institution's policy, and a comparison with an edit-detection tool |
+One password for every demo login: **TrustLadder@2026**
+
+| User ID | Role | Lands on | Menu |
+|---|---|---|---|
+| `hospital` | Hospital billing (Sahyog Multispeciality Hospital) | My bills | My bills · Issue a bill |
+| `customer` | Customer (Meera Kulkarni) | My claims | My claims · Submit a claim |
+| `officer` | Insurer claims officer | Claims inbox | Claims inbox · All claims · Try a sample bill |
+| `riskhead` | Insurer risk head (CRO) | Impact dashboard | Impact dashboard · Simulated month |
+| `registry` | Registry operator | Network | Network · Integrity check |
+| `auditor` | Auditor / regulator (read-only) | Audit trail | Audit trail · How decisions are made |
+| `presenter` | Every role, with "View as" and **Reset demo** | Claims inbox | (the chosen role's menu) |
+
+This is a demonstration login: passwords are stored hashed, but there is no rate
+limiting or account management.
+
+## Sample data (all fictional, rebuilt by `python -m trustladder.seed`)
+
+* 5 hospitals: Sahyog (Pune), Arogya (Nashik) and Kaveri (Kolhapur) have joined
+  the registry; Shanti (Satara) and Niramay (Sangli) have not.
+* 15 customers; Meera Kulkarni has a login and three claims (one paid, one waiting
+  for a clearer copy, one in review).
+* 34 claims across every outcome, each judged by the real ladder: 16 paid on
+  proof, 8 known frauds (none paid automatically), officer decisions on many,
+  and one honest wrongful hold (a genuine discounted bill held by the rule, then
+  released by the officer).
+* "Reset demo" (presenter) restores exactly this state from a snapshot.
 
 ## The six demo bills
 
@@ -54,11 +73,13 @@ builds the demo world.
 ## Tests
 
     uv pip install --python .venv/bin/python -r requirements-dev.txt
-    .venv/bin/python -m pytest -q tests          # TC-01..TC-16 engine, TC-20..TC-27 screens
+    .venv/bin/python -m pytest -q tests          # TC-01..TC-17 engine, TC-40..TC-54 role-based screens
     .venv/bin/python tools/record_demo.py        # TC-30 in real Chrome + the backup video
 
-The recorder drives the running app in Google Chrome, checks every verdict the
-browser shows, and writes `build/TrustLadder_demo.mp4` plus stills for the slides.
+The recorder drives the running app in Google Chrome as one story across every role,
+checks each verdict and status in the browser, and writes `build/TrustLadder_demo.mp4`
+plus stills for the slides. Add a URL and `--check` to run the same checks against the
+live site without recording.
 
 ## Design notes and honest limits
 

@@ -225,6 +225,26 @@ def render_resaved(bill: BillFields, *, joined: bool) -> bytes:
     return out.getvalue()
 
 
+def render_discount_resaved(bill: BillFields, discount_pct: int = 5) -> bytes:
+    """A GENUINE bill from a small hospital that printed a discounted total
+    without an itemised discount line, and which the customer later re-saved.
+    Two innocent quirks look like two independent findings (the sums do not add
+    up; the file was re-saved), so without an issuer record the rule HOLDS it.
+    A person then releases it: this is the honest 'wrongful hold' the risk head
+    must see counted.
+    """
+    discounted = BillFields(**{**bill.__dict__,
+                               "total_paise": bill.total_paise * (100 - discount_pct) // 100 // 100 * 100})
+    issued_at = _dt.datetime.fromisoformat(bill.bill_date + "T11:20:00")
+    base = render_genuine(discounted, joined=False, issued_at=issued_at)
+    writer = PdfWriter(io.BytesIO(base), incremental=True)
+    writer.add_metadata({"/Producer": "PhoneDocs Compressor 2.0",
+                         "/ModDate": _pdf_date(issued_at + _dt.timedelta(days=3))})
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
 def render_fabricated(bill: BillFields, *, joined: bool) -> bytes:
     """A bill typed from a blank page.
 

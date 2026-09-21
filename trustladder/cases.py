@@ -129,6 +129,11 @@ def build_showcase(data_dir: Path = DATA_DIR) -> Path:
     fake2 = random_bill(rng, "IN-HOSP-SHANTI-STR-0419", name, bp, 1203, "2026-03-09")
     (out / SHOWCASE[5][0]).write_bytes(render_fabricated(fake2, joined=False))
 
+    # Every bill the showcase published, so the hospitals' own ledgers can list
+    # them (the registry and the ledger must always agree on what was issued).
+    (out / "published_bills.json").write_text(json.dumps(
+        [{**b.__dict__, "items": [i.__dict__ for i in b.items]} for b in [meera] + background + [scan]],
+        indent=2))
     (out / "manifest.json").write_text(json.dumps(
         [{"file": f, "title": t, "shows": s, "expected": e} for f, t, s, e in SHOWCASE], indent=2))
     return out

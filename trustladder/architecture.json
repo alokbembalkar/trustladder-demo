@@ -4,7 +4,7 @@
   "layers": [
     {"name": "Intake", "sub": "channels", "components": [
       {"label": "Claims / loan system API", "built": false},
-      {"label": "Portal upload", "built": true},
+      {"label": "Role-based portal (6 roles)", "built": true},
       {"label": "Batch and audit runs", "built": false}]},
     {"name": "Document intelligence", "sub": "multimodal AI", "components": [
       {"label": "Vision-language model reading", "built": false},
