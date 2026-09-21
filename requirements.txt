@@ -1,0 +1,8 @@
+# What the app needs to run (this is also what Streamlit Community Cloud installs).
+streamlit==1.64.0
+reportlab==5.0.1
+pypdf==6.19.0
+pypdfium2==5.13.0
+cryptography==50.0.1
+pandas==3.0.6
+pillow==12.3.0

@@ -1,0 +1,13 @@
+# Demo look and feel. The local port (8765) is set in run_demo.sh, so the same
+# config also works on Streamlit Community Cloud.
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"
+
+[theme]
+base = "light"
+primaryColor = "#0F766E"
+textColor = "#1B2A41"
+font = "sans serif"

@@ -1,0 +1,5 @@
+# Test suite and the recorded backup video only.
+-r requirements.txt
+pytest==9.1.1
+playwright==1.63.0
+imageio-ffmpeg==0.6.0
