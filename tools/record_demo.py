@@ -29,7 +29,9 @@ from playwright.sync_api import Page, sync_playwright
 ROOT = Path(__file__).resolve().parent.parent
 BUILD = ROOT / "build"
 STILLS = BUILD / "stills"
-URL = "http://127.0.0.1:8765/"
+# Default: the local demo. Pass a URL to run the same browser checks against a
+# deployed copy, e.g. python tools/record_demo.py https://trustladder-demo.onrender.com/
+URL = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8765/"
 SIZE = {"width": 1440, "height": 900}
 
 # How long each caption stays on screen (ms). Tuned for reading, not speed.
@@ -165,6 +167,11 @@ def main() -> None:
             "The issuer's record contradicts it, and independent checks agree: the sums, the "
             "file's history, the font. Two independent findings convict: Tampered."],
             "case2_tampered")
+        pg.locator("[data-testid='stGraphVizChart']:visible").first.scroll_into_view_if_needed()
+        pg.wait_for_timeout(1200)
+        caption(pg, "The evidence graph: findings grouped into independent families. Four independent "
+                    "lines point against this bill; the policy-as-code rule R2 turns them into the verdict.", 5600)
+        still(pg, "evidence_graph")
         run_case(pg, 2, "Suspicious", [
             "Case 3. A bill made from nothing. It looks perfect and passes every "
             "appearance check.",
@@ -208,6 +215,14 @@ def main() -> None:
         still(pg, "policy_4of5")
         caption(pg, "An edit-detection tool on the same claims pays every fake made from nothing, "
                     "and holds genuine customers whose files were merely re-saved.", 5600)
+        # --- AI architecture
+        tab(pg, "6 · AI architecture")
+        caption(pg, "The AI architecture, drawn from the same file as the deck. Solid boxes run in this "
+                    "demo today; dashed boxes are the target design using current AI models.", 5600)
+        scroll_main(pg, 200)
+        still(pg, "architecture")
+        caption(pg, "Neural models read and gather evidence; a symbolic, published rule decides; people "
+                    "own the exceptions.", 4600)
         caption(pg, "TrustLadder. Only proof clears. Unproven goes to a person. Wrongful holds are "
                     "counted, not hidden.", 5200)
         video_path = Path(pg.video.path())

@@ -1,0 +1,44 @@
+{
+  "_comment": "Single source of truth for the TrustLadder AI architecture. Read by the demo's Architecture tab AND by the capstone deck (slide 5), so the two can never disagree. built=true means it runs in this demo today; built=false is the target design using current AI models.",
+  "tagline": "An AI-native, neuro-symbolic decision layer for document trust",
+  "layers": [
+    {"name": "Intake", "sub": "channels", "components": [
+      {"label": "Claims / loan system API", "built": false},
+      {"label": "Portal upload", "built": true},
+      {"label": "Batch and audit runs", "built": false}]},
+    {"name": "Document intelligence", "sub": "multimodal AI", "components": [
+      {"label": "Vision-language model reading", "built": false},
+      {"label": "Layout transformer (LayoutLM / Donut)", "built": false},
+      {"label": "Field normaliser + confidence gate", "built": true}]},
+    {"name": "1  Detect", "sub": "evidence models", "components": [
+      {"label": "Forensic screening checks", "built": true},
+      {"label": "Visual tamper models", "built": false},
+      {"label": "Generative-AI forgery detector", "built": false},
+      {"label": "Issuer knowledge graph", "built": false}]},
+    {"name": "2  Decide", "sub": "neuro-symbolic core", "components": [
+      {"label": "Evidence graph: independent findings", "built": true},
+      {"label": "Policy-as-code rule engine (versioned)", "built": true},
+      {"label": "Verdict + evidence grade", "built": true}]},
+    {"name": "3  Verify", "sub": "agentic orchestration", "components": [
+      {"label": "Tool-calling evidence agent", "built": false},
+      {"label": "Registry lookup (local mirror)", "built": true},
+      {"label": "Signature and QR validation", "built": false},
+      {"label": "DigiLocker check", "built": false}]},
+    {"name": "4  Explain + review", "sub": "human-in-the-loop", "components": [
+      {"label": "LLM reason writer, GraphRAG over policy", "built": false},
+      {"label": "Guardrail check-back", "built": true},
+      {"label": "Officer console", "built": true},
+      {"label": "Feedback to retraining", "built": false}]}
+  ],
+  "foundation": {"name": "Governance + MLOps", "components": [
+    {"label": "Audit trail", "built": true},
+    {"label": "Fairness monitor (wrongful holds)", "built": true},
+    {"label": "Model registry + drift", "built": false},
+    {"label": "Privacy by design", "built": true}]},
+  "stages": {
+    "Detect":       {"sub": "evidence models",       "ai_inside": "Vision transformers and forensic models, plus a detector for generative-AI forgeries."},
+    "Decide":       {"sub": "neuro-symbolic core",   "ai_inside": "Neuro-symbolic: models build an evidence graph; a policy-as-code rule decides."},
+    "Verify":       {"sub": "agentic orchestration", "ai_inside": "A tool-calling agent gathers proof: registry, signatures, issuer QR, DigiLocker."},
+    "Human review": {"sub": "human-in-the-loop",     "ai_inside": "An LLM drafts the reason, grounded by GraphRAG over the policy and checked back."}
+  }
+}

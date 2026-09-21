@@ -1,5 +1,5 @@
 """
-Screen test cases (TC-20 .. TC-26), run against the real app script with
+Screen test cases (TC-20 .. TC-29), run against the real app script with
 Streamlit's headless AppTest. They assert what a viewer would see: tab labels,
 verdict banners, the review queue, the audit trail, the hospital flow, the
 registry forgery check and the policy metrics.
@@ -33,12 +33,12 @@ def _verdict_shown(at) -> str:
 
 def test_tc20_app_loads_with_five_tabs():
     """TC-20. Steps: open the app.
-    Expected: no exception; five tabs with the labels the script uses."""
+    Expected: no exception; six tabs with the labels the script uses."""
     at = _app()
     assert not at.exception
     assert [t.label for t in at.tabs] == ["1 · Check a bill", "2 · Human review",
                                           "3 · Hospital (issuer)", "4 · Registry",
-                                          "5 · Policy & impact"]
+                                          "5 · Policy & impact", "6 · AI architecture"]
 
 
 @pytest.mark.parametrize("index", range(6))
@@ -152,3 +152,42 @@ def test_tc27_stage_order_matches_the_proposal():
     assert [t.split(" · ")[1].split(" (")[0] for t in titles] == ["Detect", "Decide", "Verify",
                                                                   "Human review"]
     assert any("Detect → Decide → Verify → Human review" in m.value for m in at.markdown)
+
+
+def test_tc28_architecture_tab_matches_the_shared_spec():
+    """TC-28. Steps: open the AI architecture tab.
+    Expected: every component in architecture.json is drawn, solid when built and
+    dashed when target; the tagline in the header is the spec's tagline; the
+    built/target counts shown add up to the spec."""
+    spec = json.loads((Path(APP).parent / "trustladder" / "architecture.json").read_text())
+    at = _app()
+    html = next(m.value for m in at.markdown if 'data-testid="tl-architecture"' in m.value)
+    comps = [c for layer in spec["layers"] + [spec["foundation"]] for c in layer["components"]]
+    for c in comps:
+        cls = "built" if c["built"] else "target"
+        assert f'<div class="tl-comp {cls}">{c["label"]}</div>' in html, c["label"]
+    assert any(spec["tagline"] in m.value for m in at.markdown)
+    built = sum(c["built"] for c in comps)
+    assert any(m.value == f"**Built in this demo ({built})**" for m in at.markdown)
+    assert any(m.value == f"**Target design ({len(comps) - built})**" for m in at.markdown)
+
+
+def test_tc29_stage_cards_carry_ai_inside_and_evidence_graph():
+    """TC-29. Steps: run demo bill 2 (altered total).
+    Expected: each stage card shows its 'AI inside (target design)' line from the
+    spec; the Decide card shows '4 independent lines against'; an evidence graph
+    is drawn containing the rule id R2 and the verdict Tampered; the reason is
+    labelled as a template with GraphRAG as the target design."""
+    spec = json.loads((Path(APP).parent / "trustladder" / "architecture.json").read_text())
+    at = _app()
+    sel = at.selectbox(key="showcase_pick")
+    sel.set_value(sel.options[1]).run()
+    at.button(key="run").click().run()
+    for name, stage in spec["stages"].items():
+        assert any(stage["ai_inside"] in m.value for m in at.markdown), name
+    assert any("4 independent lines against" in m.value for m in at.markdown)
+    graphs = at.get("graphviz_chart")
+    assert graphs, "no evidence graph drawn"
+    dot = graphs[0].proto.spec
+    assert "R2" in dot and "Tampered" in dot
+    assert any("GraphRAG" in c.value and "template" in c.value for c in at.caption)

@@ -1,5 +1,5 @@
 """
-Engine test cases (TC-01 .. TC-16).
+Engine test cases (TC-01 .. TC-17).
 
 Each test is one formal test case: its docstring states the steps and the
 expected result. These cover the verdicts, the reasons and the registry; the
@@ -263,3 +263,27 @@ def test_tc16_freshly_issued_bill_verifies_immediately():
     r = run_ladder(render_genuine(bill, joined=True), verifier)
     assert r.verdict is Verdict.AUTHENTIC
     assert PdfReader(io.BytesIO(render_genuine(bill, joined=True))).pages
+
+
+def test_tc17_evidence_graph_agrees_with_the_rule():
+    """TC-17. Steps: build the evidence graph for all six demo bills.
+    Expected: Tampered always has >= 2 independent lines against; Suspicious has
+    exactly 1; Authentic has proof and 0 against; the counts match the rule's
+    own family arithmetic; DOT output names the rule and the verdict."""
+    from trustladder import evidence
+    for f in ["01_genuine_sahyog.pdf", "02_altered_total_sahyog.pdf", "03_fabricated_sahyog.pdf",
+              "04_genuine_shanti_not_joined.pdf", "05_scan_arogya.pdf",
+              "06_fabricated_shanti_not_joined.pdf"]:
+        r = _run(f)
+        g = evidence.build(r)
+        expected = len({x.family for x in r.findings}) + (
+            1 if r.registry_answer in (RegistryAnswer.MISMATCH, RegistryAnswer.NO_RECORD) else 0)
+        assert g.independent_against == expected, f
+        if r.verdict is Verdict.TAMPERED:
+            assert g.independent_against >= 2
+        if r.verdict is Verdict.SUSPICIOUS:
+            assert g.independent_against == 1
+        if r.verdict is Verdict.AUTHENTIC:
+            assert g.proof and g.independent_against == 0
+        dot = evidence.to_dot(r, g)
+        assert r.verdict.value in dot and r.rule_applied.split(":")[0] in dot

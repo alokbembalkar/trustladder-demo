@@ -34,6 +34,7 @@ import pypdfium2 as pdfium
 import streamlit as st
 
 from trustladder import RULE_VERSION, crypto
+from trustladder import evidence
 from trustladder.bills import format_inr, render_altered, render_genuine
 from trustladder.cases import DATA_DIR, HOSPITALS, SHOWCASE_JOINED, build_showcase
 from trustladder.models import BillFields, LineItem, Verdict
@@ -43,6 +44,10 @@ from trustladder.policy import (ALLOWED, COST_PER_HOUR_RS, DEFAULT_POLICY,
 from trustladder.registry import Publisher, RegistryStore, Verifier
 
 st.set_page_config(page_title="TrustLadder demo", page_icon="🪜", layout="wide")
+
+# The architecture (layers, components, built vs target, stage wording) is shared
+# with the capstone deck through this one file, so the two always agree.
+ARCH = json.loads((Path(__file__).parent / "trustladder" / "architecture.json").read_text())
 
 # --------------------------------------------------------------------------
 # Look and feel
@@ -72,6 +77,17 @@ st.markdown(f"""
   .tl-verdict .sub {{ font-size:0.95rem; opacity:0.95; }}
   .tl-stage-title {{ font-weight:700; color:{INK}; font-size:1.02rem; }}
   .tl-muted {{ color:#64748B; font-size:0.86rem; }}
+  .tl-ai {{ color:{TEAL}; font-size:0.78rem; font-style:italic; margin:2px 0 6px 0; }}
+  .tl-layer {{ display:flex; gap:8px; align-items:stretch; background:#F1F5F9; border-radius:8px;
+              padding:8px; margin-bottom:6px; }}
+  .tl-layer.found {{ background:{INK}; }}
+  .tl-lname {{ width:190px; flex:none; font-weight:700; color:{INK}; font-size:0.92rem; }}
+  .tl-layer.found .tl-lname {{ color:white; }}
+  .tl-lname span {{ display:block; font-weight:400; font-style:italic; color:#64748B; font-size:0.78rem; }}
+  .tl-comp {{ flex:1; border-radius:7px; padding:8px 6px; text-align:center; font-weight:700;
+             font-size:0.8rem; display:flex; align-items:center; justify-content:center; }}
+  .tl-comp.built {{ background:{TEAL}; color:white; border:1.5px solid {TEAL}; }}
+  .tl-comp.target {{ background:white; color:{TEAL}; border:1.5px dashed {TEAL}; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -171,6 +187,8 @@ def check_document(pdf_bytes: bytes, name: str):
 # --------------------------------------------------------------------------
 
 st.title("TrustLadder")
+st.markdown(f'<div style="color:{TEAL};font-weight:700;font-size:1.1rem;margin-top:-0.6rem">'
+            f'{ARCH["tagline"]}</div>', unsafe_allow_html=True)
 st.markdown(
     "**From document detection to digital trust.** A bill is carried up four stages, "
     "**Detect → Decide → Verify → Human review**, and comes back with a verdict, the "
@@ -185,10 +203,18 @@ with st.sidebar:
         st.rerun()
     st.caption("Reset discards bills issued in this session and rebuilds the six demo bills.")
 
-tab_check, tab_review, tab_hospital, tab_registry, tab_policy = st.tabs([
+tab_check, tab_review, tab_hospital, tab_registry, tab_policy, tab_arch = st.tabs([
     "1 · Check a bill", "2 · Human review", "3 · Hospital (issuer)",
-    "4 · Registry", "5 · Policy & impact",
+    "4 · Registry", "5 · Policy & impact", "6 · AI architecture",
 ])
+
+
+def stage_header(n: int, name: str) -> None:
+    """Stage title + the deck's 'AI inside' line, both from architecture.json."""
+    stage = ARCH["stages"][name]
+    st.markdown(f'<div class="tl-stage-title">{n} · {name} ({stage["sub"]})</div>'
+                f'<div class="tl-ai">AI inside (target design): {stage["ai_inside"]}</div>',
+                unsafe_allow_html=True)
 
 
 # --------------------------------------------------------------------------
@@ -208,10 +234,13 @@ def render_result(r, pdf_bytes: bytes) -> None:
             f'<div class="sub">Risk: {r.risk} · Evidence: {r.evidence_grade.value} · '
             f'Next: {r.queue}</div></div>', unsafe_allow_html=True)
         st.markdown(f"**Reason.** {r.reason}")
+        st.caption("Reason drafted from the findings only and checked back against the verdict "
+                   "(a template in this demo; target design: an LLM grounded by GraphRAG over the "
+                   "institution's policy, with the same guardrail check-back).")
 
         s1, s2 = st.columns(2)
         with s1.container(border=True):
-            st.markdown('<div class="tl-stage-title">1 · Detect (screen)</div>', unsafe_allow_html=True)
+            stage_header(1, "Detect")
             if r.read_status.value != "Read":
                 st.markdown(chip("Could not read", "#475569"), unsafe_allow_html=True)
                 st.caption(r.read_note)
@@ -228,9 +257,12 @@ def render_result(r, pdf_bytes: bytes) -> None:
                 for f in r.findings:
                     st.caption(f"• [{f.family}] {f.detail}")
         with s2.container(border=True):
-            st.markdown('<div class="tl-stage-title">2 · Decide (published rule)</div>',
+            stage_header(2, "Decide")
+            graph = evidence.build(r)
+            st.markdown(chip(r.evidence_grade.value, TEAL) + "&nbsp;" +
+                        chip(f"{graph.independent_against} independent line"
+                             f"{'s' if graph.independent_against != 1 else ''} against", "#475569"),
                         unsafe_allow_html=True)
-            st.markdown(chip(r.evidence_grade.value, TEAL), unsafe_allow_html=True)
             if r.registry_answer.value == "Not asked":
                 st.caption("Nothing could be read, so there was no evidence to grade and no "
                            f"proof to ask for. Rule {r.rule_applied}")
@@ -239,13 +271,13 @@ def render_result(r, pdf_bytes: bytes) -> None:
                            f"for proof (stage 3) before deciding. Rule {r.rule_applied}")
         s3, s4 = st.columns(2)
         with s3.container(border=True):
-            st.markdown('<div class="tl-stage-title">3 · Verify (issuer registry)</div>',
-                        unsafe_allow_html=True)
+            stage_header(3, "Verify")
             ans = r.registry_answer.value
             st.markdown(chip(ans, REGISTRY_COLOUR[ans]), unsafe_allow_html=True)
-            st.caption(r.registry_note)
+            st.caption(r.registry_note + " Built today: a local-mirror registry lookup. "
+                       "Target: an agent that also checks signatures, issuer QR codes and DigiLocker.")
         with s4.container(border=True):
-            st.markdown('<div class="tl-stage-title">4 · Human review</div>', unsafe_allow_html=True)
+            stage_header(4, "Human review")
             if r.needs_human:
                 st.markdown(chip("Sent to a person", "#B45309"), unsafe_allow_html=True)
                 st.caption(r.queue + ". See tab 2.")
@@ -253,8 +285,13 @@ def render_result(r, pdf_bytes: bytes) -> None:
                 st.markdown(chip("Not needed", "#15803D"), unsafe_allow_html=True)
                 st.caption("Proof-grade evidence: paid straight through.")
 
-        with st.expander("Audit record (what gets written to the claim file)"):
-            st.json(result_to_record(r))
+    # Full width under the bill and the stage cards, so the graph is readable.
+    st.markdown("**Evidence graph** · the neuro-symbolic core: findings grouped into independent "
+                "families, which the published rule turns into the verdict. The rule counts "
+                "families, so two symptoms of one edit never count twice.")
+    st.graphviz_chart(evidence.to_dot(r, evidence.build(r)), width="stretch")
+    with st.expander("Audit record (what gets written to the claim file)"):
+        st.json(result_to_record(r))
 
 
 # --------------------------------------------------------------------------
@@ -508,3 +545,37 @@ with tab_policy:
         }).T
         st.markdown("**As hospitals join, straight-through payment rises and review work falls**")
         st.bar_chart(trend, color=["#15803D", "#B45309"], stack=False, height=260)
+
+
+# --------------------------------------------------------------------------
+# Tab 6: the AI architecture (same source as the deck's slide 5)
+# --------------------------------------------------------------------------
+
+with tab_arch:
+    st.subheader("AI architecture: neural models read and gather evidence, a symbolic rule decides")
+    st.caption("The same diagram as slide 5 of the deck, drawn from the same file. Solid = running in "
+               "this demo today. Dashed = target design using current AI models, not claimed as built.")
+
+    def layer_html(layer: dict, found: bool = False) -> str:
+        comps = "".join(
+            f'<div class="tl-comp {"built" if c["built"] else "target"}">{c["label"]}</div>'
+            for c in layer["components"])
+        sub = f'<span>{layer["sub"]}</span>' if layer.get("sub") else ""
+        return (f'<div class="tl-layer{" found" if found else ""}">'
+                f'<div class="tl-lname">{layer["name"]}{sub}</div>{comps}</div>')
+
+    arch_html = "".join(layer_html(layer) for layer in ARCH["layers"])
+    arch_html += layer_html(ARCH["foundation"], found=True)
+    st.markdown(f'<div data-testid="tl-architecture">{arch_html}</div>', unsafe_allow_html=True)
+    built = [c["label"] for layer in ARCH["layers"] + [ARCH["foundation"]]
+             for c in layer["components"] if c["built"]]
+    target = [c["label"] for layer in ARCH["layers"] + [ARCH["foundation"]]
+              for c in layer["components"] if not c["built"]]
+    a1, a2 = st.columns(2)
+    a1.markdown(f"**Built in this demo ({len(built)})**")
+    a1.caption(" · ".join(built))
+    a2.markdown(f"**Target design ({len(target)})**")
+    a2.caption(" · ".join(target))
+    st.info("Trust network, outside the verifier: the hospital's publisher signs two codes per bill, "
+            "the neutral registry hosts the signed files, and the Verify layer mirrors them. "
+            "Only codes travel; patient data never leaves the hospital (see tabs 3 and 4).")
