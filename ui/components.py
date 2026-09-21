@@ -115,6 +115,8 @@ def architecture_diagram() -> None:
     uri = "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
     st.markdown(f'<div data-testid="tl-architecture"><img src="{uri}" style="width:100%" '
                 f'alt="TrustLadder architecture diagram"/></div>', unsafe_allow_html=True)
+    st.download_button("Download the full-size diagram (SVG)", svg, "TrustLadder_architecture.svg",
+                       mime="image/svg+xml", key="arch_svg")
     comps = [c for l in ARCH["layers"] + [ARCH["foundation"]] for c in l["components"]]
     built = [c["label"] for c in comps if c["built"]]
     target = [c["label"] for c in comps if not c["built"]]
