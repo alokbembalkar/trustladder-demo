@@ -1,0 +1,13 @@
+# Render Blueprint for the TrustLadder demo (same pattern as the ReconAI deploy).
+# Render builds from this repository, pre-generates the synthetic demo data at build
+# time (so the first visit is fast), and serves the Streamlit app on Render's $PORT.
+services:
+  - type: web
+    name: trustladder-demo
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt && python -m trustladder.cases
+    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8

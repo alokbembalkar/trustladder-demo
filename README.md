@@ -13,9 +13,10 @@ simulated issuer registry. It runs offline on a laptop and connects to nothing.
 
     ./run_demo.sh                      # opens on http://127.0.0.1:8765
 
-Online: the same app is deployed from this repository on Streamlit Community Cloud
-(`app.py`, Python 3.12). The first visit after a restart spends about 30 seconds
-generating the synthetic data.
+Online: the same app is deployed from this repository on Render using
+`render.yaml` (free plan, Python 3.12; the synthetic data is generated at build
+time). A free Render service sleeps when idle, so the first visit can take
+about a minute to wake it.
 
 The script uses its own isolated Python environment (`.venv`, Python 3.12 via
 `uv`). It shares nothing with any other project on the machine and uses port 8765.
