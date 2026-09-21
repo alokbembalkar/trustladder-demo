@@ -86,7 +86,8 @@ def _hash_password(password: str, salt_hex: str) -> str:
 
 
 def now() -> str:
-    return _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
+    """Indian Standard Time, whatever time zone the server runs in (Render runs UTC)."""
+    return _dt.datetime.now(_dt.timezone(_dt.timedelta(hours=5, minutes=30))).strftime("%Y-%m-%d %H:%M")
 
 
 class Store:

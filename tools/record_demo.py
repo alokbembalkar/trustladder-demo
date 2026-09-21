@@ -70,10 +70,17 @@ def still(pg: Page, name: str) -> None:
 
 
 def settle(pg: Page) -> None:
-    """Wait until Streamlit has finished re-running the page."""
-    pg.wait_for_timeout(700)
+    """Wait until Streamlit has STARTED and then FINISHED re-running the page.
+
+    On a slow server the 'running' indicator can take a moment to appear, so
+    waiting only for its absence would return too early.
+    """
+    try:
+        pg.wait_for_selector("[data-testid='stStatusWidget']", state="attached", timeout=3000)
+    except Exception:
+        pass                                   # the rerun was already over
     pg.wait_for_function("() => !document.querySelector('[data-testid=\"stStatusWidget\"]')", timeout=SLOW)
-    pg.wait_for_timeout(500)
+    pg.wait_for_timeout(600)
 
 
 def top(pg: Page) -> None:
@@ -141,9 +148,8 @@ def main() -> None:
         pg.get_by_role("button", name="Sign in").click()
         pg.wait_for_selector("text=Sign out", timeout=SLOW)
         settle(pg)
-        if not CHECK_ONLY:
-            pg.get_by_role("button", name="Reset demo").click()       # always the same story
-            settle(pg)
+        pg.get_by_role("button", name="Reset demo").click()           # always the same story
+        settle(pg)
         expect_text(pg, "Claims inbox", "presenter signed in")
 
         # 1. Hospital issues a bill
@@ -186,7 +192,10 @@ def main() -> None:
         settle(pg)
         top(pg)
         expect_text(pg, "need something from you", "customer page after resubmission")
-        if pg.get_by_text("We need a clearer copy of your bill").count():
+        try:
+            pg.wait_for_function("() => !document.body.innerText.includes('We need a clearer copy of your bill')",
+                                 timeout=SLOW)
+        except Exception:
             raise SystemExit("TC-30 FAILED: clearer copy did not clear the waiting claim")
         print("TC-30 pass: clearer copy resolved the waiting claim")
         caption(pg, "The original PDF is confirmed by the hospital and paid.", 3200)
