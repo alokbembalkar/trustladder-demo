@@ -18,6 +18,7 @@ account management.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import streamlit as st
@@ -77,7 +78,6 @@ def login_screen() -> None:
             user = store.authenticate(uid, pw)
             if user:
                 st.session_state.user = user
-                st.session_state.acting = user["role"] if user["role"] != "presenter" else "officer"
                 st.rerun()
             else:
                 st.error("That user ID and password do not match.")
@@ -93,38 +93,97 @@ if not user:
 
 
 # --------------------------------------------------------------------------
+# The presenter's guided story: one step per screen, with what to click and say
+# --------------------------------------------------------------------------
+
+STEPS = [
+    # role, page, short name, what to click, what to say
+    ("hospital", "Issue a bill", "Hospital",
+     "Meera Kulkarni is already chosen as the patient. Press **Issue bill and publish**.",
+     "The hospital prints a random ticket on the bill and tells the registry. No patient data leaves the hospital."),
+    ("customer", "Submit a claim", "Customer",
+     "Her new bill is already selected. Press **Submit claim**.",
+     "Paid at once: the hospital itself confirmed the bill, so no officer was needed."),
+    ("officer", "Claims inbox", "Claims officer",
+     "Look at the first claim, then press **Reject as fraud**.",
+     "Only claims that could not be proven reach a person. Here the total was raised after the bill was issued."),
+    ("officer", "Try a sample bill", "A perfect-looking fake",
+     "Choose sample **3** and press **Check this bill**.",
+     "It looks perfect and passes every visual check, yet the hospital never issued it."),
+    ("riskhead", "Dashboard", "Risk head",
+     "Point at the three numbers.",
+     "Fraud stopped, and honest customers wrongly held: both are counted. Only proven bills are paid automatically."),
+    ("registry", "Network", "Registry",
+     "Point at 'Patient data held: None'.",
+     "The registry holds scrambled codes only. A complete theft would reveal nothing."),
+    ("auditor", "Audit trail", "Auditor",
+     "Point at the latest rows: the bill, the claim and your decision.",
+     "Every machine verdict and every human decision is recorded, for the regulator and for disputes."),
+]
+
+
+def _go(i: int) -> None:
+    """Move the guided story to step i and open that step's screen."""
+    st.session_state.step = i
+    role, page = STEPS[i][0], STEPS[i][1]
+    st.session_state[f"nav_{role}"] = page
+
+
+def guide_bar() -> None:
+    i = st.session_state.setdefault("step", 0)
+    pills = "".join(
+        f'<span class="{"on" if j == i else "done" if j < i else ""}">{j + 1} {name}</span>'
+        for j, (_, _, name, _, _) in enumerate(STEPS))
+    left, right = st.columns([6, 1.3])
+    left.markdown(f'<div class="tl-steps">{pills}</div>', unsafe_allow_html=True)
+    b1, b2 = right.columns(2)
+    b1.button("◂ Back", key="step_back", on_click=_go, args=(max(0, i - 1),), disabled=i == 0)
+    b2.button("Next ▸", key="step_next", type="primary", on_click=_go, args=(min(len(STEPS) - 1, i + 1),),
+              disabled=i == len(STEPS) - 1)
+    _, _, _, do, say = STEPS[i]
+    do = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", do)          # **bold** -> <b>bold</b> inside HTML
+    st.markdown(f'<div class="tl-guide"><div class="do"><b>Do:</b> {do}</div>'
+                f'<div class="say">Say: “{say}”</div></div>', unsafe_allow_html=True)
+
+
+# --------------------------------------------------------------------------
 # Signed in: sidebar with logo, who you are, your menu
 # --------------------------------------------------------------------------
 
 is_presenter = user["role"] == "presenter"
+if is_presenter and "step" not in st.session_state:
+    _go(0)
+acting = STEPS[st.session_state["step"]][0] if is_presenter else user["role"]
+acting_user = store.user(acting) if is_presenter else user      # act exactly as that role's demo user
+
 with st.sidebar:
     st.markdown(logo_html(34), unsafe_allow_html=True)
     st.write("")
-    if is_presenter:
-        roles = [r for r in MENUS]
-        acting = st.selectbox("View as", roles, format_func=lambda r: ROLES[r], key="acting")
-        acting_user = store.user(acting)          # act exactly as that role's demo user
-    else:
-        acting = user["role"]
-        acting_user = user
     st.markdown(f'**{acting_user["name"]}**<br><span class="tl-muted">{acting_user["org"]}</span><br>'
                 f'<span class="tl-role">{ROLES[acting]}</span>', unsafe_allow_html=True)
     st.write("")
     menu = MENUS[acting]
-    page = st.radio("Menu", [label for label, _ in menu], key=f"nav_{acting}", label_visibility="collapsed")
-    st.write("")
+    if len(menu) > 1:
+        page = st.radio("Menu", [label for label, _ in menu], key=f"nav_{acting}", label_visibility="collapsed")
+    else:
+        page = menu[0][0]
     st.divider()
+    st.toggle("Show technical details", key="details",
+              help="Findings, rule numbers, the evidence graph and the audit record")
     if is_presenter:
         if st.button("Reset demo", key="reset", help="Restore the sample data as it was built"):
             restore_snapshot(DATA_DIR)
             _verifier().refresh()
-            for k in [k for k in st.session_state if k not in ("user", "acting")]:
+            for k in [k for k in st.session_state if k not in ("user",)]:
                 del st.session_state[k]
+            _go(0)
             st.rerun()
     if st.button("Sign out", key="logout"):
         st.session_state.clear()
         st.rerun()
     st.caption("Demo system · synthetic data")
 
+if is_presenter:
+    guide_bar()
 ctx = Ctx(store=store, registry=_registry(), verifier=_verifier(), user=acting_user, data_dir=DATA_DIR)
 dict(menu)[page](ctx)

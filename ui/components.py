@@ -38,64 +38,101 @@ def _stage_header(n: int, name: str) -> None:
                 unsafe_allow_html=True)
 
 
+def details_on() -> bool:
+    """The one switch that reveals technical detail (sidebar: 'Show technical details')."""
+    return bool(st.session_state.get("details", False))
+
+
 def verdict_banner(r: LadderResult, next_step: str = "") -> None:
     colour = VERDICT_COLOUR[r.verdict.value]
     st.markdown(
         f'<div class="tl-verdict" style="background:{colour}">'
         f'<div class="big" data-testid="tl-verdict">{r.verdict.value}</div>'
-        f'<div class="sub">Risk: {r.risk} · Evidence: {r.evidence_grade.value}'
-        f'{" · Next: " + next_step if next_step else ""}</div></div>', unsafe_allow_html=True)
+        f'<div class="sub">{next_step or r.queue}</div></div>', unsafe_allow_html=True)
 
 
-def verdict_view(r: LadderResult, pdf_bytes: bytes, next_step: str = "", show_graph: bool = True) -> None:
-    """The full explanation of one verdict: bill, banner, reason, four stages, graph."""
+_REGISTRY_PLAIN = {
+    "Verified": ("Hospital confirms it", "ok"),
+    "Mismatch": ("Hospital's record differs", "bad"),
+    "No record": ("Hospital never issued it", "bad"),
+    "Not covered": ("Hospital not in registry yet", "neutral"),
+    "Not asked": ("Not asked (unreadable)", "neutral"),
+}
+_TONE = {"ok": "#15803D", "warn": "#B45309", "bad": "#B91C1C", "neutral": "#475569"}
+
+
+def ladder_strip(r: LadderResult) -> None:
+    """The four stages as one line anyone can read: what each step concluded."""
+    if r.read_status.value != "Read":
+        detect = ("Could not read the copy", "neutral")
+    elif r.findings:
+        n = len({f.family for f in r.findings})
+        detect = (f"{n} kind{'s' if n != 1 else ''} of problem seen", "warn")
+    else:
+        detect = ("Nothing wrong seen", "ok")
+    verify = _REGISTRY_PLAIN[r.registry_answer.value]
+    decide = (r.verdict.value, {"Authentic": "ok", "Suspicious": "warn", "Tampered": "bad",
+                                "Inconclusive": "neutral"}[r.verdict.value])
+    person = ("Not needed", "ok") if not r.needs_human else ("A person decides", "warn")
+    cells = [("1 Detect", detect), ("2 Decide", decide), ("3 Verify", verify), ("4 Review", person)]
+    html = "".join(
+        f'<div class="tl-step"><div class="n">{name}</div>'
+        f'<div class="v" style="color:{_TONE[tone]}">{text}</div></div>' for name, (text, tone) in cells)
+    st.markdown(f'<div class="tl-strip">{html}</div>', unsafe_allow_html=True)
+
+
+def plain_reason(r: LadderResult) -> str:
+    """One or two sentences: the verdict's meaning and what the hospital's record says."""
+    opener = r.reason.split(". ")[0].rstrip(".") + "."
+    second = r.read_note if r.registry_answer.value == "Not asked" else r.registry_note
+    return f"{opener} {second}"
+
+
+def verdict_view(r: LadderResult, pdf_bytes: bytes, next_step: str = "", show_graph: bool = True,
+                 actions=None) -> None:
+    """One verdict. Simple by default; the technical detail appears with the switch."""
     col_doc, col_ladder = st.columns([2, 3], gap="large")
     with col_doc:
         st.image(preview_png(pdf_bytes), width="stretch")
     with col_ladder:
         verdict_banner(r, next_step or r.queue)
-        st.markdown(f"**Reason.** {r.reason}")
-        st.caption("Reason drafted from the findings only and checked back against the verdict "
-                   "(a template in this demo; target design: an LLM grounded by GraphRAG over the "
-                   "institution's policy, with the same guardrail check-back).")
-        graph = evidence.build(r)
-        s1, s2 = st.columns(2)
-        with s1.container(border=True):
-            _stage_header(1, "Detect")
-            if r.read_status.value != "Read":
-                st.markdown(chip("Could not read", "#475569"), unsafe_allow_html=True)
-                st.caption(r.read_note)
-            elif not r.findings:
-                st.markdown(chip("Nothing found", "#475569"), unsafe_allow_html=True)
-                st.caption("No edit traces. This is not proof: a fake typed from a blank page leaves none either.")
-            else:
-                fams = sorted({f.family for f in r.findings})
-                st.markdown(chip(f"{len(r.findings)} finding{'s' if len(r.findings) != 1 else ''} in "
-                                 f"{len(fams)} famil{'ies' if len(fams) != 1 else 'y'}", "#B45309"),
-                            unsafe_allow_html=True)
-                for f in r.findings:
-                    st.caption(f"• [{f.family}] {f.detail}")
-        with s2.container(border=True):
-            _stage_header(2, "Decide")
-            st.markdown(chip(r.evidence_grade.value, TEAL) +
-                        chip(f"{graph.independent_against} independent line"
-                             f"{'s' if graph.independent_against != 1 else ''} against", "#475569"),
-                        unsafe_allow_html=True)
-            st.caption(f"Rule {r.rule_applied}")
-        s3, s4 = st.columns(2)
-        with s3.container(border=True):
-            _stage_header(3, "Verify")
-            ans = r.registry_answer.value
-            st.markdown(chip(ans, REGISTRY_COLOUR[ans]), unsafe_allow_html=True)
-            st.caption(r.registry_note)
-        with s4.container(border=True):
-            _stage_header(4, "Human review")
-            if r.needs_human:
-                st.markdown(chip("Sent to a person", "#B45309"), unsafe_allow_html=True)
-                st.caption(r.queue)
-            else:
-                st.markdown(chip("Not needed", "#15803D"), unsafe_allow_html=True)
-                st.caption("Proof-grade evidence: paid straight through.")
+        st.markdown(f'<div class="tl-reason">{plain_reason(r)}</div>', unsafe_allow_html=True)
+        ladder_strip(r)
+        if actions:
+            actions()
+    if not details_on():
+        return
+    st.divider()
+    st.markdown("**Technical details**")
+    st.markdown(f"**Full reason.** {r.reason}")
+    st.caption("Reason drafted from the findings only and checked back against the verdict "
+               "(a template in this demo; target design: an LLM grounded by GraphRAG over the "
+               "institution's policy, with the same guardrail check-back).")
+    graph = evidence.build(r)
+    s1, s2, s3, s4 = st.columns(4)
+    with s1.container(border=True):
+        _stage_header(1, "Detect")
+        if r.read_status.value != "Read":
+            st.caption(r.read_note)
+        elif not r.findings:
+            st.caption("No edit traces. This is not proof: a fake typed from a blank page leaves none either.")
+        for f in r.findings:
+            st.caption(f"• [{f.family}] {f.detail}")
+    with s2.container(border=True):
+        _stage_header(2, "Decide")
+        st.markdown(chip(r.evidence_grade.value, TEAL) +
+                    chip(f"{graph.independent_against} independent line"
+                         f"{'s' if graph.independent_against != 1 else ''} against", "#475569"),
+                    unsafe_allow_html=True)
+        st.caption(f"Rule {r.rule_applied}")
+    with s3.container(border=True):
+        _stage_header(3, "Verify")
+        st.markdown(chip(r.registry_answer.value, REGISTRY_COLOUR[r.registry_answer.value]),
+                    unsafe_allow_html=True)
+        st.caption(r.registry_note)
+    with s4.container(border=True):
+        _stage_header(4, "Human review")
+        st.caption(r.queue)
     if show_graph:
         st.markdown("**Evidence graph** · findings grouped into independent families, which the published "
                     "rule turns into the verdict. Two symptoms of one edit never count twice.")

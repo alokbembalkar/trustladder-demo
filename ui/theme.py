@@ -49,7 +49,7 @@ def apply_css() -> None:
     st.markdown(f"""
 <style>
   #MainMenu, footer, [data-testid="stToolbar"] {{ visibility: hidden; }}
-  .block-container {{ padding-top: 1.4rem; max-width: 1240px; }}
+  .block-container {{ padding-top: 1.4rem; max-width: 1240px; font-size: 1.04rem; }}
   h1, h2, h3 {{ color: {INK}; }}
   [data-testid="stSidebar"] {{ background: #F8FAFC; border-right: 1px solid #E2E8F0; }}
   .tl-chip {{ display:inline-block; padding:2px 10px; border-radius:999px; color:white;
@@ -68,6 +68,19 @@ def apply_css() -> None:
   .tl-card {{ border:1px solid #E2E8F0; border-radius:10px; padding:12px 16px; margin-bottom:10px; background:white; }}
   .tl-role {{ display:inline-block; background:{TEAL}; color:white; border-radius:6px; padding:1px 8px;
              font-size:0.75rem; font-weight:700; }}
+  .tl-reason {{ font-size:1.12rem; line-height:1.5; color:{INK}; margin:6px 0 14px 0; }}
+  .tl-strip {{ display:flex; gap:8px; margin-top:4px; }}
+  .tl-step {{ flex:1; background:#F8FAFC; border:1px solid #E2E8F0; border-radius:10px; padding:10px 12px; }}
+  .tl-step .n {{ font-size:0.78rem; color:{MUTED}; font-weight:700; text-transform:uppercase; letter-spacing:0.3px; }}
+  .tl-step .v {{ font-size:0.98rem; font-weight:700; margin-top:2px; }}
+  .tl-guide {{ background:#ECFDF5; border:1px solid #A7F3D0; border-radius:12px; padding:14px 18px; margin:4px 0 18px 0; }}
+  .tl-guide .do {{ font-size:1.05rem; color:{INK}; }}
+  .tl-guide .say {{ font-size:0.98rem; color:{TEAL}; margin-top:6px; font-style:italic; }}
+  .tl-steps {{ display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; }}
+  .tl-steps span {{ padding:5px 12px; border-radius:999px; font-size:0.85rem; font-weight:700;
+                    background:#F1F5F9; color:{MUTED}; }}
+  .tl-steps span.on {{ background:{TEAL}; color:white; }}
+  .tl-steps span.done {{ background:#CCFBF1; color:{TEAL}; }}
   .tl-layer {{ display:flex; gap:8px; align-items:stretch; background:#F1F5F9; border-radius:8px;
               padding:8px; margin-bottom:6px; }}
   .tl-layer.found {{ background:{INK}; }}

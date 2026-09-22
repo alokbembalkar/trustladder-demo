@@ -26,11 +26,11 @@ APP = str(Path(__file__).resolve().parent.parent / "app.py")
 SPEC = json.loads((Path(APP).parent / "trustladder" / "architecture.json").read_text())
 
 MENUS = {
-    "hospital": ["My bills", "Issue a bill"],
+    "hospital": ["Issue a bill", "My bills"],
     "customer": ["My claims", "Submit a claim"],
-    "officer": ["Claims inbox", "All claims", "Try a sample bill"],
-    "riskhead": ["Impact dashboard", "Simulated month"],
-    "registry": ["Network", "Integrity check"],
+    "officer": ["Claims inbox", "Try a sample bill"],
+    "riskhead": ["Dashboard"],
+    "registry": ["Network"],
     "auditor": ["Audit trail", "How decisions are made"],
 }
 
@@ -93,12 +93,14 @@ def test_tc41_each_role_lands_on_its_own_home_with_its_own_menu():
     """TC-41. Steps: sign in as each of the six role users.
     Expected: no exception; the menu holds exactly that role's items; the first
     page is the role's home; the sidebar shows the role badge."""
-    homes = {"hospital": "My bills", "customer": "Hello, Meera", "officer": "Claims inbox",
-             "riskhead": "Impact dashboard", "registry": "Network", "auditor": "Audit trail"}
+    homes = {"hospital": "Issue a bill", "customer": "Hello, Meera", "officer": "Claims inbox",
+             "riskhead": "Dashboard", "registry": "Network", "auditor": "Audit trail"}
     for role, items in MENUS.items():
         at = _login(role)
         assert not at.exception, role
-        assert at.radio(key=f"nav_{role}").options == items, role
+        nav = [r for r in at.radio if r.key == f"nav_{role}"]
+        # a role with a single screen has no menu at all: nothing to get lost in
+        assert (nav[0].options if nav else [homes[role]]) == items, role
         assert homes[role] in _texts(at), role
         assert 'class="tl-role"' in _texts(at)
 
@@ -111,9 +113,9 @@ def test_tc42_role_isolation():
     assert _texts(at).count("claim CLM-") == 3
     for other in ("Claims inbox", "Impact dashboard", "Audit trail", "Network"):
         assert other not in at.radio(key="nav_customer").options
-    at = _login("hospital")
+    at = _go(_login("hospital"), "hospital", "My bills")
     assert "CLM-" not in _texts(at)
-    assert "do not see who checked" in _texts(at)
+    assert "never see who checked" in _texts(at)
 
 
 def test_tc43_sign_out():
@@ -133,7 +135,7 @@ def test_tc44_hospital_to_customer_to_officer_to_auditor():
     Expected: the bill appears in Meera's documents; the claim is Paid on proof
     (Authentic); the officer's list shows it; the auditor sees the issue and the
     verdict events."""
-    at = _go(_login("hospital"), "hospital", "Issue a bill")
+    at = _login("hospital")
     patient = at.selectbox(key="h_patient")
     patient.select_index(patient.options.index("Meera Kulkarni (Pune)")).run()
     at.button(key="h_issue").click().run()
@@ -149,8 +151,7 @@ def test_tc44_hospital_to_customer_to_officer_to_auditor():
     assert claim["verdict"] == "Authentic" and claim["status"] == "Paid"
     assert "Paid" in _texts(at)
 
-    at = _go(_login("officer"), "officer", "All claims")
-    assert claim["claim_id"] in at.dataframe[0].value["Claim"].tolist()
+    assert claim["claim_id"] in [c["claim_id"] for c in _store().claims()]
 
     at = _login("auditor")
     at.text_input(key="aud_q").input(claim["claim_id"]).run()
@@ -178,19 +179,19 @@ def test_tc45_customer_sends_clearer_copy():
 
 def test_tc46_officer_decision_moves_the_numbers():
     """TC-46. Steps: the officer opens the first claim in the inbox (on hold) and
-    presses 'Fraud: reject and refer'.
-    Expected: the claim becomes Rejected; the risk head's 'rejected' count rises
+    presses 'Reject as fraud'.
+    Expected: the claim becomes Rejected; the risk head's 'stopped as fraud' count rises
     by one; the audit trail records the decision next to the machine verdict."""
     before = _store().measures()["rejected"]
     at = _login("officer")
     first = at.selectbox(key="inbox_pick").value
-    cid = first.split(" · ")[0]
+    cid = first.split(" · ")[-1]
     assert "On hold" in first
     at.button(key=f"dec_reject_{cid}").click().run()
     assert _store().claim(cid)["status"] == "Rejected"
     assert _store().measures()["rejected"] == before + 1
     at = _login("riskhead")
-    assert f'<div class="v">{before + 1}</div><div class="l">rejected as fraud after review' in _texts(at)
+    assert f'<div class="v">{before + 1}</div><div class="l">stopped as fraud after review' in _texts(at)
     ev = [e for e in _store().audit() if e["claim_id"] == cid]
     assert any(e["event"] == "Rejected and referred to investigation" and "machine verdict was" in e["detail"]
                for e in ev)
@@ -223,8 +224,7 @@ def test_tc48_registry_enrol_and_integrity():
     at.button(key="enrol").click().run()
     assert "4 of 5" in _texts(at)
     assert set(at.dataframe[0].value["Patient data held"]) == {"None"}
-    at = _go(at, "registry", "Integrity check")
-    assert set(at.dataframe[0].value["Signature"]) == {"Valid"}
+    assert set(at.dataframe[1].value["Signature"]) == {"Valid"}
     at.button(key="forge").click().run()
     assert any(s.value.startswith("Rejected: the hospital's signature") for s in at.success)
 
@@ -252,20 +252,17 @@ def test_tc49_sample_data_is_complete_and_consistent():
 
 
 def test_tc50_presenter_switches_roles_and_resets():
-    """TC-50. Steps: sign in as presenter; view as hospital, then customer; submit
-    a claim; press Reset demo.
-    Expected: the menu follows the chosen role; after Reset the world is back to
-    34 claims."""
+    """TC-50. Steps: sign in as presenter; issue a bill on step 1; Next; submit the
+    claim on step 2; press Reset demo.
+    Expected: the guided steps switch role and screen; after Reset the world is
+    back to 34 claims."""
     at = _login("presenter")
-    at.selectbox(key="acting").set_value("hospital").run()
-    assert at.radio(key="nav_hospital").options == MENUS["hospital"]
-    at = _go(at, "hospital", "Issue a bill")
+    assert at.radio(key="nav_hospital").options == MENUS["hospital"]      # step 1 = hospital
     patient = at.selectbox(key="h_patient")
     patient.select_index(patient.options.index("Meera Kulkarni (Pune)")).run()
     at.button(key="h_issue").click().run()
-    at.selectbox(key="acting").set_value("customer").run()
-    assert at.radio(key="nav_customer").options == MENUS["customer"]
-    at = _go(at, "customer", "Submit a claim")
+    at.button(key="step_next").click().run()                             # step 2 = customer
+    assert at.radio(key="nav_customer").value == "Submit a claim"
     at.button(key="cs_submit").click().run()          # newest document = the bill just issued
     assert _store().measures()["claims"] == 35
     at.button(key="reset").click().run()
@@ -304,11 +301,13 @@ def test_tc52_auditor_sees_rule_and_architecture():
 
 
 def test_tc53_verdict_view_has_ai_inside_and_evidence_graph():
-    """TC-53. Steps: officer → Try a sample bill → bill 2 → Run.
+    """TC-53. Steps: officer → switch on 'Show technical details' → Try a sample
+    bill → bill 2 → Check this bill.
     Expected: stage cards in the order Detect, Decide, Verify, Human review, each
     with its 'AI inside' line; '4 independent lines against'; an evidence graph
     naming R2 and Tampered; the reason labelled as a template (GraphRAG = target)."""
     at = _go(_login("officer"), "officer", "Try a sample bill")
+    at.toggle(key="details").set_value(True).run()
     sel = at.selectbox(key="showcase_pick")
     sel.set_value(sel.options[1]).run()
     at.button(key="run").click().run()
@@ -333,3 +332,40 @@ def test_tc54_duplicate_claim_is_refused():
     at.button(key="cs_submit").click().run()
     assert any("already been claimed" in w.value for w in at.warning)
     assert _store().measures()["claims"] == before
+
+
+def test_tc55_simple_by_default():
+    """TC-55. Steps: officer → Try a sample bill → bill 2 → Check this bill, with the
+    details switch OFF (the default).
+    Expected: the verdict, a one-sentence reason and the four-step strip are shown;
+    no rule numbers, evidence graph or 'AI inside' lines appear until the switch is on."""
+    at = _go(_login("officer"), "officer", "Try a sample bill")
+    sel = at.selectbox(key="showcase_pick")
+    sel.set_value(sel.options[1]).run()
+    at.button(key="run").click().run()
+    texts = _texts(at)
+    assert _verdict(at) == "Tampered"
+    assert 'class="tl-strip"' in texts and "Hospital's record differs" in texts
+    assert "Rule R2" not in texts and "AI inside" not in texts
+    assert not at.get("graphviz_chart")
+    at.toggle(key="details").set_value(True).run()
+    assert at.get("graphviz_chart") and "Rule R2" in _texts(at)
+
+
+def test_tc56_guided_steps_for_the_presenter():
+    """TC-56. Steps: sign in as presenter; press Next through all seven steps.
+    Expected: every step shows a 'Do:' and a 'Say:' line; the role changes as
+    planned (hospital, customer, officer, officer, risk head, registry, auditor);
+    Back is disabled on step 1 and Next on the last step; no exceptions."""
+    expected = ["hospital", "customer", "officer", "officer", "riskhead", "registry", "auditor"]
+    at = _login("presenter")
+    assert at.button(key="step_back").disabled
+    for i, role in enumerate(expected):
+        texts = _texts(at)
+        assert "<b>Do:</b>" in texts and "Say:" in texts, i
+        from trustladder.store import ROLES
+        assert f'<span class="tl-role">{ROLES[role]}</span>' in texts, (i, role)
+        assert not at.exception, i
+        if i < len(expected) - 1:
+            at.button(key="step_next").click().run()
+    assert at.button(key="step_next").disabled
