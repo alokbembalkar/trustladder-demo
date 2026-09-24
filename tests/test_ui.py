@@ -28,7 +28,7 @@ SPEC = json.loads((Path(APP).parent / "trustladder" / "architecture.json").read_
 MENUS = {
     "hospital": ["Issue a bill", "My bills"],
     "customer": ["My claims", "Submit a claim"],
-    "officer": ["Claims inbox", "Try a sample bill"],
+    "officer": ["Claims inbox", "Check any bill"],
     "riskhead": ["Dashboard"],
     "registry": ["Network"],
     "auditor": ["Audit trail", "How decisions are made"],
@@ -144,7 +144,7 @@ def test_tc44_hospital_to_customer_to_officer_to_auditor():
     bill_no = re.search(r"Issued (\S+)", ok).group(1)
 
     at = _go(_login("customer"), "customer", "Submit a claim")
-    option = next(o for o in at.radio(key="cs_pick").options if o.startswith(bill_no))
+    option = next(o for o in at.radio(key="cs_pick").options if bill_no in o)
     at.radio(key="cs_pick").set_value(option).run()
     at.button(key="cs_submit").click().run()
     claim = _store().claim(at.session_state["cs_last"])
@@ -271,10 +271,10 @@ def test_tc50_presenter_switches_roles_and_resets():
 
 @pytest.mark.parametrize("index", range(6))
 def test_tc51_sample_bills_show_expected_verdicts(index):
-    """TC-51 (x6). Steps: officer → Try a sample bill → pick bill N → Run.
+    """TC-51 (x6). Steps: officer → Check any bill → pick bill N → Run.
     Expected: the verdict banner shows the manifest's expected verdict."""
     manifest = json.loads((DATA_DIR / "showcase" / "manifest.json").read_text())
-    at = _go(_login("officer"), "officer", "Try a sample bill")
+    at = _go(_login("officer"), "officer", "Check any bill")
     sel = at.selectbox(key="showcase_pick")
     sel.set_value(sel.options[index]).run()
     at.button(key="run").click().run()
@@ -306,7 +306,7 @@ def test_tc53_verdict_view_has_ai_inside_and_evidence_graph():
     Expected: stage cards in the order Detect, Decide, Verify, Human review, each
     with its 'AI inside' line; '4 independent lines against'; an evidence graph
     naming R2 and Tampered; the reason labelled as a template (GraphRAG = target)."""
-    at = _go(_login("officer"), "officer", "Try a sample bill")
+    at = _go(_login("officer"), "officer", "Check any bill")
     at.toggle(key="details").set_value(True).run()
     sel = at.selectbox(key="showcase_pick")
     sel.set_value(sel.options[1]).run()
@@ -335,11 +335,11 @@ def test_tc54_duplicate_claim_is_refused():
 
 
 def test_tc55_simple_by_default():
-    """TC-55. Steps: officer → Try a sample bill → bill 2 → Check this bill, with the
+    """TC-55. Steps: officer → Check any bill → bill 2 → Check this bill, with the
     details switch OFF (the default).
     Expected: the verdict, a one-sentence reason and the four-step strip are shown;
     no rule numbers, evidence graph or 'AI inside' lines appear until the switch is on."""
-    at = _go(_login("officer"), "officer", "Try a sample bill")
+    at = _go(_login("officer"), "officer", "Check any bill")
     sel = at.selectbox(key="showcase_pick")
     sel.set_value(sel.options[1]).run()
     at.button(key="run").click().run()
@@ -369,3 +369,49 @@ def test_tc56_guided_steps_for_the_presenter():
         if i < len(expected) - 1:
             at.button(key="step_next").click().run()
     assert at.button(key="step_next").disabled
+
+
+def test_tc57_the_demo_story_follows_one_bill():
+    """TC-57. Steps: as presenter, issue a bill on step 1; Next; submit it on step 2;
+    Next; press the 'forged copy' button on step 3.
+    Expected: the claim the officer opens is for the SAME hospital and the SAME bill
+    number that was just issued, is Tampered, and is preselected in the inbox; the
+    customer's paid claim and the forged one are two different claims."""
+    at = _login("presenter")
+    patient = at.selectbox(key="h_patient")
+    patient.select_index(patient.options.index("Meera Kulkarni (Pune)")).run()
+    at.button(key="h_issue").click().run()
+    bill_no = re.search(r"Issued (\S+)", next(s.value for s in at.success)).group(1)
+    at.button(key="step_next").click().run()
+    assert "just issued to you" in at.radio(key="cs_pick").value          # preselected for the story
+    at.button(key="cs_submit").click().run()
+    paid = _store().claim(at.session_state["cs_last"])
+    assert paid["bill_no"] == bill_no and paid["status"] == "Paid"
+    at.button(key="step_next").click().run()
+    at.button(key="step_action_2").click().run()
+    forged = _store().claim(at.session_state["story_claim"])
+    assert forged["claim_id"] != paid["claim_id"]
+    assert forged["issuer_name"] == paid["issuer_name"], "the story must stay with one hospital"
+    assert forged["verdict"] == "Tampered" and forged["status"] == "On hold"
+    assert forged["claim_id"] in at.selectbox(key="inbox_pick").value      # opened for the officer
+    assert any(f"bill {bill_no}" in m.value for m in at.markdown)          # same bill, on screen
+    assert _verdict(at) == "Tampered"
+
+
+def test_tc58_upload_is_offered_everywhere_with_sample_bills():
+    """TC-58. Steps: customer → Submit a claim → choose 'Upload a bill (PDF)';
+    officer → Check any bill.
+    Expected: both screens offer an upload without switching anything on, both offer
+    the six sample bills as a zip, and the zip holds the six named PDFs plus a README."""
+    import zipfile, io
+    at = _go(_login("customer"), "customer", "Submit a claim")
+    assert at.radio(key="cs_source").options == ["From my documents", "Upload a bill (PDF)"]
+    at.radio(key="cs_source").set_value("Upload a bill (PDF)").run()
+    assert any(b.label.startswith("Download 6 sample bills") for b in at.get("download_button"))
+    at = _go(_login("officer"), "officer", "Check any bill")
+    assert any(b.label.startswith("Download 6 sample bills") for b in at.get("download_button"))
+    assert at.get("file_uploader"), "the officer can upload a bill without switching anything on"
+    pack = DATA_DIR / "TrustLadder_sample_bills.zip"
+    names = zipfile.ZipFile(pack).namelist()
+    assert len([n for n in names if n.endswith(".pdf")]) == 6
+    assert any(n.endswith("README.txt") for n in names)

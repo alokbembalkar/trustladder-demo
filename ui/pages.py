@@ -49,6 +49,15 @@ class Ctx:
     data_dir: Path
 
 
+def sample_pack_button(ctx: Ctx, key: str) -> None:
+    """Offer the six sample bills as a zip, so anyone can try the upload path."""
+    pack = ctx.data_dir / "TrustLadder_sample_bills.zip"
+    if pack.exists():
+        st.download_button("Download 6 sample bills (zip)", pack.read_bytes(),
+                           "TrustLadder_sample_bills.zip", mime="application/zip", key=key,
+                           help="Genuine, altered, made-from-nothing, not-joined and blurred examples")
+
+
 def _status_chip(status: str) -> str:
     return chip(status, STATUS_COLOUR.get(status, "#475569"))
 
@@ -84,6 +93,8 @@ def hospital_issue(ctx: Ctx) -> None:
                           cust["name"], items, sum(i.amount_paise for i in items))
         pdf = issue_bill(ctx.store, ctx.registry, ctx.verifier, bill, cust["customer_id"], ctx.user["name"])
         st.session_state.h_issued = (bill, pdf)
+        st.session_state.story_bill = bill.bill_no        # the demo story follows this one bill
+        st.session_state.story_customer = cust["customer_id"]
     issued = st.session_state.get("h_issued")
     if issued:
         bill, pdf = issued
@@ -160,33 +171,52 @@ def customer_claims(ctx: Ctx) -> None:
 
 def customer_submit(ctx: Ctx) -> None:
     cid = ctx.user["customer_id"]
-    page_title("Submit a claim", "Choose a bill your hospital sent you. It is checked the moment you submit.")
+    page_title("Submit a claim", "Choose a bill your hospital sent you, or upload one. It is checked the "
+                                 "moment you submit.")
     docs = ctx.store.documents_of_customer(cid)
     claimed = {c["bill_no"] for c in ctx.store.claims(customer_id=cid) if c["bill_no"]}
-    options = {f"{d['bill_no']} · {d['issuer_name']} · {inr(d['total_paise'])}"
-               + ("  (already claimed)" if d["bill_no"] in claimed else ""): d["bill_no"] for d in docs}
-    pick = st.radio("My documents", list(options) or ["(no documents yet)"], key="cs_pick")
-    with st.expander("Or upload a PDF instead"):
+    options = {}
+    for d in docs:
+        label = f"{d['issuer_name']} · {d['bill_date']} · {inr(d['total_paise'])} · {d['bill_no']}"
+        if d["bill_no"] in claimed:
+            label += "  (already claimed)"
+        elif d["bill_no"] == st.session_state.get("story_bill"):
+            label += "  ← just issued to you"
+        options[label] = d["bill_no"]
+    # put the bill from the demo story first, so nothing has to be hunted for
+    order = sorted(options, key=lambda k: (options[k] != st.session_state.get("story_bill"),
+                                           "already claimed" in k))
+    source = st.radio("How do you want to claim?", ["From my documents", "Upload a bill (PDF)"],
+                      horizontal=True, key="cs_source")
+    pdf = name = bill_no = None
+    if source == "From my documents":
+        pick = st.radio("My documents", order or ["(no documents yet)"], key="cs_pick",
+                        label_visibility="collapsed")
+        if pick in options:
+            bill_no = options[pick]
+    else:
         up = st.file_uploader("Upload a bill (PDF)", type=["pdf"], key="cs_upload")
-    if st.button("Submit claim", type="primary", key="cs_submit"):
         if up is not None:
             pdf, name, bill_no = up.getvalue(), up.name, ""
-        elif pick in options:
-            bill_no = options[pick]
+        sample_pack_button(ctx, "cs_pack")
+    if st.button("Submit claim", type="primary", key="cs_submit"):
+        if pdf is None:
+            if bill_no is None:
+                st.warning("Choose a document, or upload a PDF first.")
+                return
             if bill_no in claimed:
-                # The insurer's ordinary duplicate check: one bill, one claim.
+                # the insurer's ordinary duplicate check: one bill, one claim
                 st.warning(f"{bill_no} has already been claimed. See My claims for where it stands.")
                 return
             pdf, name = ctx.store.bill_pdf(bill_no), f"{bill_no.replace('/', '_')}.pdf"
-        else:
-            st.warning("Choose a document or upload a PDF first.")
-            return
-        st.session_state.cs_last = submit_claim(ctx.store, ctx.verifier, cid, pdf, name, bill_no,
+        st.session_state.cs_last = submit_claim(ctx.store, ctx.verifier, cid, pdf, name, bill_no or "",
                                                 actor=ctx.user["name"])
     last = st.session_state.get("cs_last")
     if last:
         c = ctx.store.claim(last)
-        st.markdown(f"Claim **{c['claim_id']}** submitted. " + _status_chip(c["status"]), unsafe_allow_html=True)
+        st.write("")
+        st.markdown(f"**{c['issuer_name']}** · claim {c['claim_id']} " + _status_chip(c["status"]),
+                    unsafe_allow_html=True)
         st.info(CUSTOMER_TEXT[c["status"]])
 
 
@@ -197,7 +227,10 @@ def customer_submit(ctx: Ctx) -> None:
 def _claim_detail(ctx: Ctx, claim_id: str) -> None:
     c = ctx.store.claim(claim_id)
     r = result_from_json(json.loads(c["result_json"]))
-    st.markdown(f"#### {c['customer_name']} · {c['issuer_name']} · {c['claim_id']}")
+    # The bill number matters on screen: it shows the panel this is the same bill.
+    bill = f" · bill {c['bill_no']}" if c["bill_no"] else ""
+    st.markdown(f"#### {c['customer_name']} · {c['issuer_name']}{bill}")
+    st.caption(f"Claim {c['claim_id']} · submitted {c['submitted_at']}")
 
     def decision_buttons() -> None:
         """Shown right under the verdict, so the decision is one glance away."""
@@ -237,28 +270,37 @@ def officer_inbox(ctx: Ctx) -> None:
         return
     order = {"On hold": 0, "In review": 1, "Waiting for hospital": 2, "Waiting for customer": 3}
     open_claims.sort(key=lambda c: (order.get(c["status"], 9), c["submitted_at"]))
-    labels = {f"{c['status']} · {c['verdict']} · {c['customer_name']} · {c['issuer_name']} · {c['claim_id']}":
+    labels = {f"{c['customer_name']} · {c['issuer_name']} · {c['verdict']} · {c['status']} · {c['claim_id']}":
               c["claim_id"] for c in open_claims}
+    story = st.session_state.get("story_claim")
+    if story and story in labels.values() and st.session_state.get("inbox_pick") not in labels:
+        st.session_state.inbox_pick = next(k for k, v in labels.items() if v == story)
     pick = st.selectbox("Claim", list(labels), key="inbox_pick")
     _claim_detail(ctx, labels[pick])
 
 
 def officer_samples(ctx: Ctx) -> None:
-    page_title("Try a sample bill", "Six prepared bills, one for each situation. Nothing here is saved.")
+    page_title("Check any bill", "Upload a bill, or try one of the six prepared ones. Nothing here is "
+                                 "saved as a claim.")
     manifest = json.loads((ctx.data_dir / "showcase" / "manifest.json").read_text())
     options = [f"{i + 1}. {m['title']}" for i, m in enumerate(manifest)]
-    choice = st.selectbox("Sample bill", options, key="showcase_pick")
-    m = manifest[options.index(choice)]
-    pdf, name = (ctx.data_dir / "showcase" / m["file"]).read_bytes(), m["file"]
-    if C.details_on():
-        up = st.file_uploader("…or upload any PDF bill", type=["pdf"], key="sample_upload")
+    c1, c2 = st.columns([3, 2], gap="large")
+    with c1:
+        choice = st.selectbox("A prepared bill", options, key="showcase_pick")
+        m = manifest[options.index(choice)]
+        pdf, name = (ctx.data_dir / "showcase" / m["file"]).read_bytes(), m["file"]
+        shows = m["shows"]
+    with c2:
+        up = st.file_uploader("…or upload a bill (PDF)", type=["pdf"], key="sample_upload")
         if up is not None:
-            pdf, name = up.getvalue(), up.name
+            pdf, name, shows = up.getvalue(), up.name, ""
+        sample_pack_button(ctx, "of_pack")
     if st.button("Check this bill", type="primary", key="run"):
-        st.session_state.sample_result = (name, run_ladder(pdf, ctx.verifier, name), pdf)
+        st.session_state.sample_result = (name, run_ladder(pdf, ctx.verifier, name), pdf, shows)
     last = st.session_state.get("sample_result")
     if last and last[0] == name:
-        st.caption(f"What this case shows: {m['shows']}")
+        if last[3]:
+            st.caption(f"What this case shows: {last[3]}")
         C.verdict_view(last[1], last[2])
     else:
         st.image(C.preview_png(pdf), width=430)
@@ -387,7 +429,7 @@ def auditor_rules(ctx: Ctx) -> None:
 MENUS = {
     "hospital": [("Issue a bill", hospital_issue), ("My bills", hospital_my_bills)],
     "customer": [("My claims", customer_claims), ("Submit a claim", customer_submit)],
-    "officer": [("Claims inbox", officer_inbox), ("Try a sample bill", officer_samples)],
+    "officer": [("Claims inbox", officer_inbox), ("Check any bill", officer_samples)],
     "riskhead": [("Dashboard", risk_dashboard)],
     "registry": [("Network", registry_network)],
     "auditor": [("Audit trail", auditor_trail), ("How decisions are made", auditor_rules)],

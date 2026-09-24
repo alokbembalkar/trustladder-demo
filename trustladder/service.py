@@ -57,6 +57,23 @@ def issue_bill(store: Store, registry: RegistryStore, verifier: Verifier, bill: 
     return pdf
 
 
+def simulate_forged_claim(store: Store, verifier: Verifier, bill_no: str, claimant_id: str,
+                          raise_by_paise: int = 5000000) -> str:
+    """Demo action: someone takes a real bill, raises its total, and claims it.
+
+    This is the only place the demo pretends to be a forger, and it is labelled as
+    such on screen. It keeps the story on ONE bill: the officer then sees the same
+    hospital and the same bill number that the hospital issued a moment ago.
+    """
+    from .bills import render_altered
+    from .reader import read_bill
+    bill = read_bill(store.bill_pdf(bill_no))[1]
+    forged = render_altered(bill, bill.total_paise + raise_by_paise, joined=bool(bill.ticket))
+    # The forged copy carries the same bill number, so the claim links to the same bill.
+    return submit_claim(store, verifier, claimant_id, forged, f"{bill.bill_no.replace('/', '_')}_copy.pdf",
+                        bill_no=bill.bill_no, truth="fraud", actor="Demo: forged copy")
+
+
 def enrol_hospital(store: Store, registry: RegistryStore, verifier: Verifier, issuer_id: str,
                    actor: str, when: str | None = None) -> None:
     """The registry operator signs a hospital up: key pair, salt, a line in the directory."""

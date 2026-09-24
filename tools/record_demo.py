@@ -8,10 +8,9 @@ the real browser surface while doing it (test case TC-30).
 The story (signed in as the presenter, switching roles with "View as"):
   0  sign in
   1  Hospital      issues a bill to Meera: ticket printed, two signed codes published
-  2  Customer      Meera claims it: paid on proof; then sends a clearer copy for a
-                   claim that was waiting on her: paid
-  3  Officer       opens the claim on hold: Tampered, evidence graph; rejects it;
-                   tries the "made from nothing" sample bill: Suspicious
+  2  Customer      Meera claims that same bill: paid on proof
+  3  Officer       the SAME bill, forged by another claimant: Tampered; rejected
+  4  Officer       a bill made from nothing: Suspicious
   4  Risk head     impact dashboard; simulated month as hospitals join
   5  Registry      the network; a forged line is rejected
   6  Auditor       the trail of everything above; the rule and the AI architecture
@@ -177,9 +176,12 @@ def main() -> None:
         pg.wait_for_timeout(READ)
         still(pg, "customer_paid")
 
-        # 3. Claims officer rejects the claim on hold
+        # 3. The SAME bill, forged, and submitted by someone else
         next_step()
-        expect_verdict(pg, "Tampered", "step 3: first inbox claim")
+        pg.get_by_role("button", name="Simulate: someone submits a forged copy of that bill").click()
+        settle(pg)
+        expect_text(pg, "bill SMH/", "step 3: the officer sees the same bill number")
+        expect_verdict(pg, "Tampered", "step 3: forged copy of the same bill")
         pg.wait_for_timeout(READ)
         still(pg, "officer_claim")
         pg.get_by_role("button", name="Reject as fraud").first.click()
@@ -187,7 +189,7 @@ def main() -> None:
 
         # 4. The perfect-looking fake
         next_step()
-        pg.get_by_role("combobox", name="Sample bill").click()
+        pg.get_by_role("combobox", name="A prepared bill").click()
         pg.get_by_role("option").nth(2).click()
         settle(pg)
         pg.get_by_role("button", name="Check this bill").click()
