@@ -4,8 +4,8 @@ carries ONE idea and ONE main action; anything technical sits behind the
 sidebar switch "Show technical details" or in a closed section.
 
     Hospital billing      Issue a bill · My bills
-    Customer              My claims · Submit a claim
-    Claims officer        Claims inbox · Try a sample bill
+    Customer              My claims · Submit a claim   <- the ONE place a bill is uploaded
+    Claims officer        Claims inbox
     Risk head             Dashboard
     Registry operator     Network
     Auditor / regulator   Audit trail · How decisions are made
@@ -28,13 +28,11 @@ import pandas as pd
 import streamlit as st
 
 from trustladder import crypto
-from trustladder.bills import render_altered
 from trustladder.cases import HOSPITALS
 from trustladder.models import BillFields, LineItem
-from trustladder.pipeline import run_ladder
 from trustladder.policy import ALLOWED, COST_PER_HOUR_RS, MINUTES_PER_REVIEW, baseline, evaluate
 from trustladder.registry import RegistryStore, Verifier
-from trustladder.service import (DuplicateClaim, enrol_hospital, issue_bill, resubmit_claim,
+from trustladder.service import (enrol_hospital, issue_bill, resubmit_claim,
                                  submit_claim)
 from trustladder.store import CUSTOMER_TEXT, OPEN_STATUSES, Store, result_from_json
 
@@ -185,13 +183,10 @@ def customer_submit(ctx: Ctx) -> None:
         st.caption("Ready to submit:")
         st.image(C.preview_png(up.getvalue()), width=430)
     if submitted:
-        try:
-            st.session_state.cs_last = submit_claim(ctx.store, ctx.verifier, cid, up.getvalue(), up.name,
-                                                    actor=ctx.user["name"])
-        except DuplicateClaim as dup:
-            st.warning(f"Bill {dup} has already been claimed on this policy. "
-                       "See My claims for where it stands.")
-            return
+        # A bill that came in before is not refused: it is checked like any other,
+        # and "already claimed on this policy" becomes one more piece of evidence.
+        st.session_state.cs_last = submit_claim(ctx.store, ctx.verifier, cid, up.getvalue(), up.name,
+                                                actor=ctx.user["name"])
     last = st.session_state.get("cs_last")
     if last:
         c = ctx.store.claim(last)
@@ -263,35 +258,6 @@ def officer_inbox(ctx: Ctx) -> None:
         st.session_state.inbox_pick = next(k for k, v in labels.items() if v == story)
     pick = st.selectbox("Claim", list(labels), key="inbox_pick")
     _claim_detail(ctx, labels[pick])
-
-
-def officer_samples(ctx: Ctx) -> None:
-    page_title("Check any bill", "Upload a bill, or try one of the six prepared ones. Nothing here is "
-                                 "saved as a claim.")
-    manifest = json.loads((ctx.data_dir / "showcase" / "manifest.json").read_text())
-    options = [f"{i + 1}. {m['title']}" for i, m in enumerate(manifest)]
-    st.caption("The six are one set: the same patient throughout, and bills 2 and 5 are bill 1 edited "
-               "and photographed.")
-    c1, c2 = st.columns([3, 2], gap="large")
-    with c1:
-        choice = st.selectbox("A prepared bill", options, key="showcase_pick")
-        m = manifest[options.index(choice)]
-        pdf, name = (ctx.data_dir / "showcase" / m["file"]).read_bytes(), m["file"]
-        shows = m["shows"]
-    with c2:
-        up = st.file_uploader("…or upload a bill (PDF)", type=["pdf"], key="sample_upload")
-        if up is not None:
-            pdf, name, shows = up.getvalue(), up.name, ""
-        sample_pack_button(ctx, "of_pack")
-    if st.button("Check this bill", type="primary", key="run"):
-        st.session_state.sample_result = (name, run_ladder(pdf, ctx.verifier, name), pdf, shows)
-    last = st.session_state.get("sample_result")
-    if last and last[0] == name:
-        if last[3]:
-            st.caption(f"What this case shows: {last[3]}")
-        C.verdict_view(last[1], last[2])
-    else:
-        st.image(C.preview_png(pdf), width=430)
 
 
 # ==========================================================================
@@ -417,7 +383,7 @@ def auditor_rules(ctx: Ctx) -> None:
 MENUS = {
     "hospital": [("Issue a bill", hospital_issue), ("My bills", hospital_my_bills)],
     "customer": [("My claims", customer_claims), ("Submit a claim", customer_submit)],
-    "officer": [("Claims inbox", officer_inbox), ("Check any bill", officer_samples)],
+    "officer": [("Claims inbox", officer_inbox)],
     "riskhead": [("Dashboard", risk_dashboard)],
     "registry": [("Network", registry_network)],
     "auditor": [("Audit trail", auditor_trail), ("How decisions are made", auditor_rules)],

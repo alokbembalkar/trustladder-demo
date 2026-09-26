@@ -25,15 +25,25 @@ The script uses its own isolated Python environment (`.venv`, Python 3.12 via
 
 One password for every demo login: **TrustLadder@2026**
 
-| User ID | Role | Lands on | Menu |
+Every screen names a ROLE, never a person, so the demo reads the same whatever
+bill is uploaded on the day.
+
+| User ID | Shown as | Lands on | Menu |
 |---|---|---|---|
-| `hospital` | Hospital billing (Sahyog Multispeciality Hospital) | My bills | My bills · Issue a bill |
-| `customer` | Customer (Meera Kulkarni) | My claims | My claims · Submit a claim |
-| `officer` | Insurer claims officer | Claims inbox | Claims inbox · All claims · Try a sample bill |
-| `riskhead` | Insurer risk head (CRO) | Impact dashboard | Impact dashboard · Simulated month |
-| `registry` | Registry operator | Network | Network · Integrity check |
-| `auditor` | Auditor / regulator (read-only) | Audit trail | Audit trail · How decisions are made |
-| `presenter` | Every role, with "View as" and **Reset demo** | Claims inbox | (the chosen role's menu) |
+| `hospital` | Billing desk, Sahyog Multispeciality Hospital | Issue a bill | Issue a bill · My bills |
+| `customer` | Customer | My claims | My claims · **Submit a claim** |
+| `customer2` | Second customer | My claims | My claims · Submit a claim |
+| `officer` | Claims officer | Claims inbox | Claims inbox |
+| `riskhead` | Risk head | Dashboard | Dashboard |
+| `registry` | Registry operator | Network | Network |
+| `auditor` | Auditor | Audit trail | Audit trail · How decisions are made |
+| `presenter` | Presenter | step 1 of the story | the guided seven-step story, Back / Next, **Reset demo** |
+
+**Submit a claim** is the only place a bill is uploaded. It takes a genuine bill
+or a tampered one and checks both the same way, so no role has to choose a kind
+of document first, and the officer is a reviewer rather than a second upload desk.
+A bill already claimed on that policy is still accepted and checked; the repeat
+becomes one more finding, and is never paid automatically.
 
 This is a demonstration login: passwords are stored hashed, but there is no rate
 limiting or account management.
@@ -42,8 +52,9 @@ limiting or account management.
 
 * 5 hospitals: Sahyog (Pune), Arogya (Nashik) and Kaveri (Kolhapur) have joined
   the registry; Shanti (Satara) and Niramay (Sangli) have not.
-* 15 customers; Meera Kulkarni has a login and three claims (one paid, one waiting
-  for a clearer copy, one in review).
+* 15 customers. The `customer` login owns three of them (one paid, one waiting
+  for a clearer copy, one in review); `customer2` is a separate policyholder, so
+  the demo can show that one customer never sees another's claims.
 * 34 claims across every outcome, each judged by the real ladder: 16 paid on
   proof, 8 known frauds (none paid automatically), officer decisions on many,
   and one honest wrongful hold (a genuine discounted bill held by the rule, then
@@ -73,7 +84,7 @@ builds the demo world.
 ## Tests
 
     uv pip install --python .venv/bin/python -r requirements-dev.txt
-    .venv/bin/python -m pytest -q tests          # TC-01..TC-17 engine, TC-40..TC-54 role-based screens
+    .venv/bin/python -m pytest -q tests          # TC-01..TC-18 engine, TC-40..TC-62 role-based screens
     .venv/bin/python tools/record_demo.py        # TC-30 in real Chrome + the backup video
 
 The recorder drives the running app in Google Chrome as one story across every role,

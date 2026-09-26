@@ -33,7 +33,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-from .models import LadderResult
+from .models import CLAIM_HISTORY, LadderResult
 from .policy import ALLOWED, DEFAULT_POLICY, HOLD, PAY, REQUEST, REVIEW, validate
 
 # --------------------------------------------------------------------------
@@ -207,6 +207,15 @@ class Store:
         if result.rule_applied.startswith("R0") and action == REVIEW:
             # an unreadable bill is the customer's to fix, not an officer's to judge
             status = "Waiting for customer"
+        if action == PAY and any(f.family == CLAIM_HISTORY for f in result.findings):
+            # The document is genuine and the issuer proved it, so the VERDICT stays
+            # Authentic: that is the honest reading of the evidence. Whether to pay it
+            # a second time is a money question, not a document question, and it is
+            # settled here in the policy layer. Nobody is paid twice for one bill
+            # automatically; a person looks first. This can only ever make payment
+            # stricter, so the guarantee in policy.py still holds.
+            action = REVIEW
+            status = STATUS_FOR_ACTION[REVIEW]
         claim_id = self.next_claim_id()
         issuer = self._issuer_for(result, bill_no)
         when = submitted_at or now()

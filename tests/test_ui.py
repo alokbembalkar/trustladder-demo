@@ -21,8 +21,8 @@ from trustladder.registry import RegistryStore, Verifier
 from trustladder.seed import DEMO_PASSWORD, db_path, restore_snapshot
 from trustladder.bills import render_altered
 from trustladder.reader import read_bill
-from trustladder.service import DuplicateClaim, submit_claim
-from trustladder.store import Store
+from trustladder.service import CLAIM_HISTORY, submit_claim
+from trustladder.store import Store, result_from_json
 
 APP = str(Path(__file__).resolve().parent.parent / "app.py")
 SPEC = json.loads((Path(APP).parent / "trustladder" / "architecture.json").read_text())
@@ -30,7 +30,7 @@ SPEC = json.loads((Path(APP).parent / "trustladder" / "architecture.json").read_
 MENUS = {
     "hospital": ["Issue a bill", "My bills"],
     "customer": ["My claims", "Submit a claim"],
-    "officer": ["Claims inbox", "Check any bill"],
+    "officer": ["Claims inbox"],
     "riskhead": ["Dashboard"],
     "registry": ["Network"],
     "auditor": ["Audit trail", "How decisions are made"],
@@ -55,8 +55,15 @@ def _login(user_id: str, password: str = DEMO_PASSWORD) -> AppTest:
 
 
 def _go(at: AppTest, role: str, page: str) -> AppTest:
-    at.radio(key=f"nav_{role}").set_value(page).run()
+    """Move to a page. Roles with a single screen have no menu radio to move."""
+    if len(MENUS[role]) > 1:
+        at.radio(key=f"nav_{role}").set_value(page).run()
     return at
+
+
+def _inbox_top(at: AppTest) -> str:
+    """The claim id the officer's inbox opens first (worst first, then newest)."""
+    return at.selectbox(key="inbox_pick").value.split(" · ")[-1]
 
 
 def _texts(at: AppTest) -> str:
@@ -161,8 +168,8 @@ def test_tc44_hospital_to_customer_to_officer_to_auditor():
 
 
 def test_tc45_customer_sends_clearer_copy():
-    """TC-45. Steps: Meera opens My claims; for the claim waiting on her, picks
-    the Arogya bill from her documents and presses Send clearer copy.
+    """TC-45. Steps: the customer opens My claims; for the claim waiting on them, picks
+    the Arogya bill from their documents and presses Send clearer copy.
     Expected: that claim is re-judged Authentic and shows Paid; the trail logs
     'Clearer copy re-submitted'."""
     waiting = _store().claims(customer_id="CUST-001", statuses=("Waiting for customer",))
@@ -268,15 +275,15 @@ def test_tc50_presenter_switches_roles_and_resets():
 
 @pytest.mark.parametrize("index", range(6))
 def test_tc51_sample_bills_show_expected_verdicts(index):
-    """TC-51 (x6). Steps: officer → Check any bill → pick bill N → Run.
-    Expected: the verdict banner shows the manifest's expected verdict."""
+    """TC-51 (x6). Steps: as the customer, submit prepared bill N on the one upload
+    screen (the route the presenter uses now that the officer has no sample tab).
+    Expected: the claim records the manifest's expected verdict."""
     manifest = json.loads((DATA_DIR / "showcase" / "manifest.json").read_text())
-    at = _go(_login("officer"), "officer", "Check any bill")
-    sel = at.selectbox(key="showcase_pick")
-    sel.set_value(sel.options[index]).run()
-    at.button(key="run").click().run()
-    assert not at.exception
-    assert _verdict(at) == manifest[index]["expected"]
+    m = manifest[index]
+    store, verifier = _store(), Verifier(RegistryStore(DATA_DIR))
+    claim = store.claim(submit_claim(store, verifier, "CUST-002",
+                                     (DATA_DIR / "showcase" / m["file"]).read_bytes(), m["file"]))
+    assert claim["verdict"] == m["expected"], m["file"]
 
 
 def test_tc52_auditor_sees_rule_and_architecture():
@@ -298,16 +305,14 @@ def test_tc52_auditor_sees_rule_and_architecture():
 
 
 def test_tc53_verdict_view_has_ai_inside_and_evidence_graph():
-    """TC-53. Steps: officer → switch on 'Show technical details' → Try a sample
-    bill → bill 2 → Check this bill.
+    """TC-53. Steps: officer → Claims inbox (it opens the tampered claim) → switch on
+    'Show technical details'.
     Expected: stage cards in the order Detect, Decide, Verify, Human review, each
     with its 'AI inside' line; '4 independent lines against'; an evidence graph
     naming R2 and Tampered; the reason labelled as a template (GraphRAG = target)."""
-    at = _go(_login("officer"), "officer", "Check any bill")
+    at = _login("officer")
+    assert _store().claim(_inbox_top(at))["verdict"] == "Tampered"
     at.toggle(key="details").set_value(True).run()
-    sel = at.selectbox(key="showcase_pick")
-    sel.set_value(sel.options[1]).run()
-    at.button(key="run").click().run()
     titles = [re.search(r'tl-stage-title">(.+?)<', m.value).group(1)
               for m in at.markdown if 'tl-stage-title">' in m.value]
     assert [t.split(" · ")[1].split(" (")[0] for t in titles] == ["Detect", "Decide", "Verify", "Human review"]
@@ -319,31 +324,100 @@ def test_tc53_verdict_view_has_ai_inside_and_evidence_graph():
     assert any("GraphRAG" in c.value and "template" in c.value for c in at.caption)
 
 
-def test_tc54_duplicate_claim_is_refused():
-    """TC-54. Steps: submit the same bill PDF twice for the same policy.
-    Expected: the second attempt is refused as a duplicate, naming the bill, and no
-    second claim is created."""
+def test_tc54_a_repeat_of_a_proven_bill_is_evidence_not_a_refusal():
+    """TC-54. Steps: submit the same genuine, registry-confirmed bill PDF twice for
+    the same policy.
+    Expected: the second submission is accepted and checked (there is one upload
+    screen and it never refuses a file); the repeat is recorded as a 'claim history'
+    finding naming the first claim; and because the issuer still confirms the bill it
+    is STILL Authentic — a repeat on its own never convicts an honest customer."""
     store = _store()
     verifier = Verifier(RegistryStore(DATA_DIR))
     pdf = (DATA_DIR / "showcase" / "01_genuine_bill.pdf").read_bytes()
     bill_no = read_bill(pdf)[1].bill_no
     before = store.measures()["claims"]
-    submit_claim(store, verifier, "CUST-002", pdf, "bill.pdf")
-    with pytest.raises(DuplicateClaim) as dup:
-        submit_claim(store, verifier, "CUST-002", pdf, "bill_again.pdf")
-    assert str(dup.value) == bill_no
-    assert store.measures()["claims"] == before + 1
+    first = store.claim(submit_claim(store, verifier, "CUST-002", pdf, "bill.pdf"))
+    second = store.claim(submit_claim(store, verifier, "CUST-002", pdf, "bill_again.pdf"))
+    assert store.measures()["claims"] == before + 2, "both submissions are recorded"
+    assert first["bill_no"] == second["bill_no"] == bill_no
+
+    r = result_from_json(json.loads(second["result_json"]))
+    dup = [f for f in r.findings if f.family == CLAIM_HISTORY]
+    assert len(dup) == 1, "the repeat must be reported once, as its own family"
+    assert bill_no in dup[0].detail and first["claim_id"] in dup[0].detail
+    assert second["verdict"] == "Authentic", "proof still clears: a repeat alone is not a conviction"
+    assert not [f for f in result_from_json(json.loads(first["result_json"])).findings
+                if f.family == CLAIM_HISTORY], "the first submission has no history against it"
+
+    # The verdict is about the document; the money is a separate question.
+    assert first["status"] == "Paid"
+    assert second["initial_action"] == "Human review" and second["status"] == "In review", \
+        "nobody is paid twice for one bill without a person looking"
+
+    # The reason must say where the evidence came from, and must not call a repeat
+    # claim a screening finding or invent a re-saved file.
+    assert "The insurer's own records add:" in r.reason
+    assert "Screening also found" not in r.reason
+    assert "re-saved" not in r.reason
+    assert r.reason.startswith("This bill can be paid.")
+
+
+def test_tc62_a_repeat_can_never_be_paid_automatically_under_any_policy():
+    """TC-62. Steps: set the risk head's policy to the most permissive it allows
+    (Authentic → Pay), then submit the same proven bill twice.
+    Expected: the first is paid straight through and the second is not, whatever the
+    policy says, because a second claim on one bill always reaches a person."""
+    store = _store()
+    verifier = Verifier(RegistryStore(DATA_DIR))
+    store.set_policy("Authentic", "Pay", "risk head")      # the most permissive policy allowed
+    assert store.policy()["Authentic"] == "Pay"
+    pdf = (DATA_DIR / "showcase" / "01_genuine_bill.pdf").read_bytes()
+    a = store.claim(submit_claim(store, verifier, "CUST-002", pdf, "a.pdf"))
+    b = store.claim(submit_claim(store, verifier, "CUST-002", pdf, "b.pdf"))
+    assert a["status"] == "Paid"
+    assert b["status"] != "Paid", "a repeat is never paid automatically"
+
+
+def test_tc61_a_repeat_of_an_edited_bill_adds_an_independent_line():
+    """TC-61. Steps: the customer submits a genuine bill, then submits the SAME bill
+    with the total raised (what the guided story now does on one screen).
+    Expected: the second claim is Tampered and On hold; its evidence carries the
+    issuer registry, the document's own findings AND the claim-history repeat, so the
+    officer sees one more independent line than the document alone would give."""
+    store = _store()
+    verifier = Verifier(RegistryStore(DATA_DIR))
+    pdf = (DATA_DIR / "showcase" / "01_genuine_bill.pdf").read_bytes()
+    bill = read_bill(pdf)[1]
+    genuine = store.claim(submit_claim(store, verifier, "CUST-002", pdf, "bill.pdf"))
+    edited_pdf = render_altered(bill, bill.total_paise + 5000000, joined=bool(bill.ticket))
+    edited = store.claim(submit_claim(store, verifier, "CUST-002", edited_pdf, "bill_edited.pdf"))
+
+    assert genuine["verdict"] == "Authentic" and genuine["status"] == "Paid"
+    assert edited["verdict"] == "Tampered" and edited["status"] == "On hold"
+    assert edited["bill_no"] == genuine["bill_no"], "one bill, two claims, one screen"
+    r = result_from_json(json.loads(edited["result_json"]))
+    families = {f.family for f in r.findings}
+    assert CLAIM_HISTORY in families, "the insurer's own history must reach the rule"
+    assert families - {CLAIM_HISTORY}, "the document's own findings are still there"
+    # The registry counts as one line, and each finding family as another.
+    assert edited["independent_against"] == len(families) + 1
+
+    # And the officer must be able to SEE it, not just have it stored.
+    at = _login("officer")
+    assert _inbox_top(at) == edited["claim_id"], "the newest tampered claim is the one opened"
+    at.toggle(key="details").set_value(True).run()
+    texts = _texts(at)
+    assert CLAIM_HISTORY in texts, "the claim-history family must be named on screen"
+    assert "was already claimed on this policy" in texts
+    assert "The insurer's own records add:" in texts
 
 
 def test_tc55_simple_by_default():
-    """TC-55. Steps: officer → Check any bill → bill 2 → Check this bill, with the
+    """TC-55. Steps: officer → Claims inbox (it opens the tampered claim) with the
     details switch OFF (the default).
     Expected: the verdict, a one-sentence reason and the four-step strip are shown;
     no rule numbers, evidence graph or 'AI inside' lines appear until the switch is on."""
-    at = _go(_login("officer"), "officer", "Check any bill")
-    sel = at.selectbox(key="showcase_pick")
-    sel.set_value(sel.options[1]).run()
-    at.button(key="run").click().run()
+    at = _login("officer")
     texts = _texts(at)
     assert _verdict(at) == "Tampered"
     assert 'class="tl-strip"' in texts and "Hospital's record differs" in texts
@@ -356,10 +430,10 @@ def test_tc55_simple_by_default():
 def test_tc56_guided_steps_for_the_presenter():
     """TC-56. Steps: sign in as presenter; press Next through every step.
     Expected: each step shows a 'Do:' and a 'Say:' line and switches to the right
-    LOGIN (the two customers are different accounts); Back is disabled on the first
-    step and Next on the last; no exceptions."""
-    expected = ["hospital", "customer", "customer2", "officer", "officer", "riskhead", "registry",
-                "auditor"]
+    LOGIN; the story visits the customer's ONE upload screen twice in a row, so there
+    is no second customer account and no separate sample-bill tab; Back is disabled on
+    the first step and Next on the last; no exceptions."""
+    expected = ["hospital", "customer", "customer", "officer", "riskhead", "registry", "auditor"]
     at = _login("presenter")
     assert at.button(key="step_back").disabled
     for i, login in enumerate(expected):
@@ -374,10 +448,10 @@ def test_tc56_guided_steps_for_the_presenter():
 
 
 def test_tc57_the_demo_story_follows_one_bill():
-    """TC-57. Steps: the hospital issues a bill; the customer uploads it; a SECOND
-    customer uploads the tampered copy of the same bill.
+    """TC-57. Steps: the hospital issues a bill; the customer uploads it; the SAME
+    customer then uploads the edited copy of that same bill on the same screen.
     Expected: both claims carry the same hospital and bill number; the genuine one is
-    Authentic and Paid; the tampered one is Tampered and On hold, and is the claim the
+    Authentic and Paid; the edited one is Tampered and On hold, and is the claim the
     officer's inbox opens."""
     at = _login("hospital")
     at.button(key="h_issue").click().run()
@@ -387,32 +461,39 @@ def test_tc57_the_demo_story_follows_one_bill():
     bill = read_bill(pdf)[1]
     paid = store.claim(submit_claim(store, verifier, "CUST-001", pdf, "bill.pdf"))
     tampered_pdf = render_altered(bill, bill.total_paise + 5000000, joined=True)
-    forged = store.claim(submit_claim(store, verifier, "CUST-002", tampered_pdf, "bill_tampered.pdf"))
+    forged = store.claim(submit_claim(store, verifier, "CUST-001", tampered_pdf, "bill_tampered.pdf"))
     assert paid["verdict"] == "Authentic" and paid["status"] == "Paid"
     assert forged["verdict"] == "Tampered" and forged["status"] == "On hold"
     assert forged["bill_no"] == paid["bill_no"] == bill_no, "one bill, two claims"
     assert forged["issuer_name"] == paid["issuer_name"]
-    assert forged["customer_id"] != paid["customer_id"], "a different person submitted the copy"
+    assert forged["customer_id"] == paid["customer_id"], \
+        "one customer, one upload screen: the same person sends the genuine bill and the edited one"
     at = _login("officer")
     # worst first, newest first: the claim just submitted is the one the officer opens
     assert forged["claim_id"] in at.selectbox(key="inbox_pick").value
     assert f"bill {bill_no}" in _texts(at)
 
 
-def test_tc58_upload_is_offered_everywhere_with_sample_bills():
-    """TC-58. Steps: customer → Submit a claim; officer → Check any bill.
-    Expected: the customer's only route is an upload (no document list), both screens
-    offer an uploader and the six sample bills as a zip, and Submit is disabled until
-    a file is chosen; the zip holds six named PDFs and a README."""
+def test_tc58_there_is_exactly_one_place_to_upload_a_bill():
+    """TC-58. Steps: open the customer's Submit a claim screen; then read every other
+    role's screens looking for a second uploader.
+    Expected: the customer's only route is an upload (no document list), that screen
+    offers the six sample bills as a zip, Submit is disabled until a file is chosen,
+    and NO other role has an uploader — the officer's separate 'Check any bill' tab is
+    gone, so a genuine bill and a tampered one arrive by the same door."""
     import zipfile
     at = _go(_login("customer"), "customer", "Submit a claim")
     assert at.get("file_uploader"), "the customer must be able to upload"
     assert not [r for r in at.radio if r.key in ("cs_pick", "cs_source")], "no document list any more"
     assert at.button(key="cs_submit").disabled, "Submit waits for a file"
     assert any(b.label.startswith("Download 6 sample bills") for b in at.get("download_button"))
-    at = _go(_login("officer"), "officer", "Check any bill")
-    assert at.get("file_uploader")
-    assert any(b.label.startswith("Download 6 sample bills") for b in at.get("download_button"))
+
+    assert MENUS["officer"] == ["Claims inbox"], "the officer reviews claims; it is not an upload desk"
+    for role in ("officer", "riskhead", "registry", "auditor"):
+        for page in MENUS[role]:
+            other = _go(_login(role), role, page)
+            assert not other.get("file_uploader"), f"{role} / {page} must not offer a second uploader"
+
     names = zipfile.ZipFile(DATA_DIR / "TrustLadder_sample_bills.zip").namelist()
     assert len([n for n in names if n.endswith(".pdf")]) == 6
     assert any(n.endswith("README.txt") for n in names)

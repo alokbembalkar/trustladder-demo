@@ -92,15 +92,22 @@ class EvidenceGrade(str, Enum):
     NONE = "No usable evidence"
 
 
+# Evidence that does not come from the document at all. A repeat claim is known
+# only to the insurer's own records, so it is kept in its own family: it can never
+# share a cause with something found inside the PDF.
+CLAIM_HISTORY = "claim history"
+
+
 @dataclass
 class Finding:
-    """One observation from a screening check (step 1, Detect).
+    """One observation against a document: usually from a screening check (step 1,
+    Detect), or from the insurer's own records (family CLAIM_HISTORY).
 
     `family` groups checks that could share a cause. The rule counts families,
     not findings, so two symptoms of the same edit never count as two
     independent pieces of evidence.
     """
-    family: str        # "arithmetic" | "file history" | "fonts"
+    family: str        # "arithmetic" | "file history" | "fonts" | CLAIM_HISTORY
     check: str         # short machine name of the check
     detail: str        # one plain sentence a claims officer can read
 

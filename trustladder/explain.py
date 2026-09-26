@@ -15,7 +15,7 @@ same, so a model can replace `write_reason` without touching anything else.
 from __future__ import annotations
 
 from .decide import Decision
-from .models import Finding, RegistryAnswer, Verdict
+from .models import CLAIM_HISTORY, Finding, RegistryAnswer, Verdict
 
 _OPENERS = {
     Verdict.AUTHENTIC: "This bill can be paid.",
@@ -33,11 +33,25 @@ def write_reason(decision: Decision, registry: RegistryAnswer, registry_note: st
         parts.append(read_note)
     else:
         parts.append(registry_note)
-    if findings and decision.verdict is not Verdict.AUTHENTIC:
-        parts.append("Screening also found: " + " ".join(f.detail for f in findings[:2]))
-    elif findings:
-        parts.append("The file shows signs of being re-saved, but the issuer's confirmation "
-                     "covers every value that matters, so this does not change the result.")
+    # Evidence from inside the document and evidence from the insurer's own records
+    # are introduced separately: calling a repeat claim a "screening" finding would
+    # tell the reader something untrue about where it came from.
+    screened = [f for f in findings if f.family != CLAIM_HISTORY]
+    history = [f for f in findings if f.family == CLAIM_HISTORY]
+    if decision.verdict is not Verdict.AUTHENTIC:
+        if screened:
+            parts.append("Screening also found: " + " ".join(f.detail for f in screened[:2]))
+        if history:
+            parts.append("The insurer's own records add: " + " ".join(f.detail for f in history))
+    else:
+        # Only proof reaches here, so nothing below can change the verdict; say so
+        # plainly, and say which of the two kinds of evidence was actually present.
+        if history:
+            parts.append("The insurer's own records add: " + " ".join(f.detail for f in history)
+                         + " The issuer still confirms this bill, so it is not held on that alone.")
+        if screened:
+            parts.append("The file shows signs of being re-saved, but the issuer's confirmation "
+                         "covers every value that matters, so this does not change the result.")
     parts.append(decision.rule_text)
     return " ".join(p.strip() for p in parts if p and p.strip())
 

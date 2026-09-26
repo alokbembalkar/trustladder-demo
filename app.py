@@ -106,18 +106,17 @@ STEPS = [
      "Upload the **bill** you just downloaded, then press **Submit claim**.",
      "The customer uploads their bill. The hospital's own record confirms it, so it is paid at once, "
      "with no officer involved."),
-    ("customer2", "Submit a claim", "A forged copy",
+    ("customer", "Submit a claim", "The same bill, edited",
      "In the sidebar, open **Demo toolkit**, upload the bill and download the **edited copy** "
-     "(that is what a forger does on their own computer). Then upload that edited copy here and press "
-     "**Submit claim**.",
-     "Someone else submits the same bill with a bigger total. Same hospital, same bill number, and the "
-     "hospital's record disagrees, so it is held for a person.",),
+     "(that is what a forger does on their own computer). Then upload that edited copy on this same "
+     "screen and press **Submit claim**.",
+     "The same customer now sends the same bill with a bigger total. There is one place to upload a "
+     "bill and the check is the same either way: the hospital's record disagrees, and the insurer can "
+     "see it has had this bill before, so it is held for a person."),
     ("officer", "Claims inbox", "Officer decides",
-     "Open the top claim (the forged copy) and press **Reject as fraud**.",
-     "Only claims that could not be proven reach a person, and they arrive with the reason and the evidence."),
-    ("officer", "Check any bill", "A fake from nothing",
-     "Choose the prepared bill **3. Made from nothing** and press **Check this bill**.",
-     "It looks perfect and passes every visual check, yet the hospital never issued it."),
+     "Open the top claim (the edited bill) and press **Reject as fraud**.",
+     "Only claims that could not be proven reach a person, and they arrive with the reason and the "
+     "evidence behind it."),
     ("riskhead", "Dashboard", "Risk head",
      "Point at the three numbers.",
      "Fraud stopped, and honest customers wrongly held: both are counted. Only proven bills are paid "

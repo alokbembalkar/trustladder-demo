@@ -98,7 +98,8 @@ def build_sample_pack(data_dir: Path = DATA_DIR) -> Path:
     readme = ["TrustLadder sample bills (synthetic: fictional hospital, patient and amounts).",
               "All six are for the same patient. Files 2 and 5 are the same bill as file 1, edited and",
               "photographed, so you can see exactly what changed.",
-              "Upload any of these in the portal: Customer -> Submit a claim, or Claims officer -> Check any bill.",
+              "Upload any of these in the portal at Customer -> Submit a claim: that one screen takes",
+              "a genuine bill or a tampered one and checks both the same way.",
               ""]
     for name, what, expected in SAMPLE_PACK:
         (out / name).write_bytes((Path(data_dir) / "showcase" / name).read_bytes())

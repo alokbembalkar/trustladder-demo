@@ -11,14 +11,33 @@ from __future__ import annotations
 from .bills import render_genuine
 from .cases import HOSPITALS
 from .evidence import build as build_evidence
-from .models import BillFields
-from .pipeline import run_ladder
+from .models import CLAIM_HISTORY, BillFields, Finding
+from .pipeline import run_ladder, with_extra_findings
 from .registry import Publisher, RegistryStore, Verifier
 from .store import Store
 
 
-class DuplicateClaim(Exception):
-    """The same bill has already been claimed by this customer (the insurer's own check)."""
+def duplicate_findings(store: Store, customer_id: str, bill_no: str) -> list[Finding]:
+    """Evidence the document cannot carry: has this bill been claimed before?
+
+    A customer may legitimately upload the same bill twice by mistake, so this is
+    reported as a FINDING and never as a refusal. What it does NOT do is clear or
+    convict on its own: a repeat of a bill the issuer confirms is still Authentic
+    (the rule reaches "registry Verified" first), and a repeat on its own is still
+    only one line of evidence.
+    """
+    if not bill_no:
+        return []
+    earlier = [c for c in store.claims(customer_id=customer_id) if c["bill_no"] == bill_no]
+    if not earlier:
+        return []
+    first = earlier[0]
+    return [Finding(
+        family=CLAIM_HISTORY,
+        check="duplicate_claim",
+        detail=f"Bill {bill_no} was already claimed on this policy "
+               f"(claim {first['claim_id']}, {first['submitted_at']}).",
+    )]
 
 
 def submit_claim(store: Store, verifier: Verifier, customer_id: str, pdf: bytes, file_name: str,
@@ -27,13 +46,16 @@ def submit_claim(store: Store, verifier: Verifier, customer_id: str, pdf: bytes,
     """A customer submits a bill: TrustLadder checks it on attach, the policy routes it.
 
     The bill number is taken from the uploaded document itself when it can be read,
-    so an uploaded claim is linked to the same bill as the hospital's record.
+    so an uploaded claim is linked to the same bill as the hospital's record. A bill
+    that has been claimed before on this policy is accepted and checked, with the
+    repeat recorded as one more finding for the rule to weigh.
     """
     customer = store.customer(customer_id)
     result = run_ladder(pdf, verifier, file_name)
     bill_no = bill_no or (result.fields.bill_no if result.fields else "")
-    if bill_no and any(c["bill_no"] == bill_no for c in store.claims(customer_id=customer_id)):
-        raise DuplicateClaim(bill_no)
+    # The insurer knows something the PDF cannot say: whether this bill came in
+    # before. Fold that in and let the published rule weigh it with the rest.
+    result = with_extra_findings(result, duplicate_findings(store, customer_id, bill_no))
     graph = build_evidence(result)
     return store.record_claim(customer_id, customer["name"], file_name, pdf, result,
                               graph.independent_against, bill_no=bill_no, truth=truth,
