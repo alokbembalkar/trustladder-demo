@@ -99,8 +99,7 @@ if not user:
 STEPS = [
     # role, page, short name, what to click, what to say
     ("hospital", "Issue a bill", "Hospital issues",
-     "Press **Issue bill and publish**, then download **both** files: the bill, and the tampered copy "
-     "(the tampered one is a demo device, so we can show a forgery later).",
+     "Press **Issue bill and publish**, then press **Download the bill (PDF)**. Keep that file.",
      "The hospital prints a random ticket on the bill and sends the registry two scrambled codes. "
      "No patient data leaves the hospital."),
     ("customer", "Submit a claim", "Customer uploads",
@@ -108,7 +107,9 @@ STEPS = [
      "The customer uploads their bill. The hospital's own record confirms it, so it is paid at once, "
      "with no officer involved."),
     ("customer2", "Submit a claim", "A forged copy",
-     "Now, as a different customer, upload the **tampered copy** and press **Submit claim**.",
+     "In the sidebar, open **Demo toolkit**, upload the bill and download the **edited copy** "
+     "(that is what a forger does on their own computer). Then upload that edited copy here and press "
+     "**Submit claim**.",
      "Someone else submits the same bill with a bigger total. Same hospital, same bill number, and the "
      "hospital's record disagrees, so it is held for a person.",),
     ("officer", "Claims inbox", "Officer decides",
@@ -136,6 +137,34 @@ def _go(i: int) -> None:
     login, page = STEPS[i][0], STEPS[i][1]
     st.session_state[f"nav_{login}"] = page
     st.session_state.pop("cs_last", None)          # each customer sees only their own submission
+
+
+def forger_toolkit() -> None:
+    """Presenter-only: stands in for the PDF editor a forger would use on their own
+    computer. It is NOT part of the product, and no role screen can reach it.
+
+    A hospital only ever issues a genuine bill. Someone who wants to defraud the
+    insurer downloads that bill and edits it themselves. This little tool does
+    exactly that, so the demo can show a forgery of the very bill just issued.
+    """
+    from trustladder.bills import render_altered
+    from trustladder.reader import read_bill
+    with st.expander("Demo toolkit: the forger's PDF editor"):
+        st.caption("Not part of TrustLadder. It stands in for the editing someone would do on their own "
+                   "computer after downloading a genuine bill.")
+        up = st.file_uploader("The genuine bill (PDF)", type=["pdf"], key="tool_pdf")
+        extra = st.number_input("Raise the total by (Rs)", min_value=1000, max_value=500000, value=50000,
+                                step=5000, key="tool_extra")
+        if up is not None:
+            status, fields, _ = read_bill(up.getvalue())
+            if fields is None:
+                st.warning("That PDF could not be read, so it cannot be edited here.")
+            else:
+                edited = render_altered(fields, fields.total_paise + int(extra) * 100,
+                                        joined=bool(fields.ticket))
+                st.download_button("Download the edited copy", edited,
+                                   up.name.replace(".pdf", "") + "_edited.pdf", mime="application/pdf",
+                                   key="tool_dl", type="primary")
 
 
 def guide_bar() -> None:
@@ -182,6 +211,7 @@ with st.sidebar:
     st.toggle("Show technical details", key="details",
               help="Findings, rule numbers, the evidence graph and the audit record")
     if is_presenter:
+        forger_toolkit()
         if st.button("Reset demo", key="reset", help="Restore the sample data as it was built"):
             restore_snapshot(DATA_DIR)
             _verifier().refresh()

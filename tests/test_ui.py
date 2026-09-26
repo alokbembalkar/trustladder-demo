@@ -433,3 +433,30 @@ def test_tc59_separate_logins_and_no_person_hardcoded_in_the_screens():
         texts = _texts(at)
         assert f"**{shown}**" in texts, uid
         assert "Meera" not in texts, f"{uid}: screens must not hard-code a person"
+
+
+def test_tc60_the_forgery_is_made_by_the_forger_not_the_hospital():
+    """TC-60. Steps: check the hospital's screen for any way to produce a tampered
+    bill; then use the presenter-only Demo toolkit on a genuine bill.
+    Expected: the hospital offers only the genuine bill, and says nothing about a
+    tampered copy; the toolkit is presenter-only and turns a genuine bill into one
+    that the ladder judges Tampered, with the same bill number."""
+    at = _login("hospital")
+    at.button(key="h_issue").click().run()
+    labels = [b.label for b in at.get("download_button")]
+    assert labels == ["Download the bill (PDF)"], labels
+    assert "tampered" not in _texts(at).lower()
+    assert not [e for e in at.get("expander") if "toolkit" in (e.label or "").lower()]
+
+    at = _login("presenter")
+    assert any("toolkit" in (e.label or "").lower() for e in at.get("expander")), \
+        "the forger's editor belongs to the presenter, not to any role"
+
+    # what the toolkit produces, judged by the real ladder
+    store, verifier = _store(), Verifier(RegistryStore(DATA_DIR))
+    bill_no = store.bills_of_issuer("IN-HOSP-SAHYOG-PUN-0101")[0]["bill_no"]
+    genuine = store.bill_pdf(bill_no)
+    fields = read_bill(genuine)[1]
+    edited = render_altered(fields, fields.total_paise + 5000000, joined=bool(fields.ticket))
+    claim = store.claim(submit_claim(store, verifier, "CUST-002", edited, "bill_edited.pdf"))
+    assert claim["verdict"] == "Tampered" and claim["bill_no"] == bill_no

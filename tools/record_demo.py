@@ -7,9 +7,10 @@ the real browser surface while doing it (test case TC-30).
 
 The story (signed in as the presenter, switching roles with "View as"):
   0  sign in
-  1  Hospital      issues a bill; the two PDFs are downloaded (genuine + tampered copy)
-  2  Customer      uploads the genuine PDF: paid on proof
-  3  2nd customer  uploads the tampered copy of the SAME bill: Tampered
+  1  Hospital      issues a bill; the genuine PDF is downloaded
+  2  Customer      uploads that PDF: paid on proof
+  3  2nd customer  edits the bill in the demo toolkit (the forger's editor) and
+                   uploads the edited copy of the SAME bill: Tampered
   4  Officer       opens it (same bill number) and rejects it
   5  Officer       a bill made from nothing: Suspicious
   4  Risk head     impact dashboard; simulated month as hospitals join
@@ -169,18 +170,15 @@ def main() -> None:
         genuine = Path(BUILD / "demo_files" / d1.value.suggested_filename)
         genuine.parent.mkdir(parents=True, exist_ok=True)
         d1.value.save_as(str(genuine))
-        with pg.expect_download() as d2:
-            pg.get_by_role("button", name="Download a tampered copy").click()
-        tampered = genuine.parent / d2.value.suggested_filename
-        d2.value.save_as(str(tampered))
-        print(f"TC-30 pass: downloaded {genuine.name} and {tampered.name}")
+        print(f"TC-30 pass: downloaded the genuine bill {genuine.name}")
         pg.wait_for_timeout(READ)
         still(pg, "hospital_issue")
 
         # 2. The customer uploads that bill
         next_step()
         expect_text(pg, "Your bill (PDF)", "step 2: customer upload screen")
-        pg.locator("input[type='file']").first.set_input_files(str(genuine))
+        # scope to the main area: the presenter's sidebar toolkit also has an upload box
+        pg.locator("[data-testid='stMain'] input[type='file']").first.set_input_files(str(genuine))
         settle(pg)
         pg.get_by_role("button", name="Submit claim").click()
         settle(pg)
@@ -189,10 +187,20 @@ def main() -> None:
         pg.wait_for_timeout(READ)
         still(pg, "customer_upload")
 
-        # 3. A second customer uploads the tampered copy of the SAME bill
+        # 3. The forger edits that bill in the demo toolkit, then a second customer
+        #    uploads the edited copy. (A hospital never produces a tampered bill.)
         next_step()
         expect_text(pg, "Second customer", "step 3: a different customer")
-        pg.locator("input[type='file']").first.set_input_files(str(tampered))
+        pg.get_by_text("Demo toolkit: the forger's PDF editor").click()
+        pg.wait_for_timeout(600)
+        pg.locator("[data-testid='stSidebar'] input[type='file']").first.set_input_files(str(genuine))
+        settle(pg)
+        with pg.expect_download() as d2:
+            pg.get_by_role("button", name="Download the edited copy").click()
+        tampered = genuine.parent / d2.value.suggested_filename
+        d2.value.save_as(str(tampered))
+        print(f"TC-30 pass: the forger's toolkit produced {tampered.name}")
+        pg.locator("[data-testid='stMain'] input[type='file']").first.set_input_files(str(tampered))
         settle(pg)
         pg.get_by_role("button", name="Submit claim").click()
         settle(pg)

@@ -111,19 +111,10 @@ def hospital_issue(ctx: Ctx) -> None:
                                     "entries": [[k[:20] + "…", v[:20] + "…"] for k, v in batch["entries"]],
                                     "signature": batch["signature"][:20] + "…"}, indent=2, ensure_ascii=False),
                         language="json")
-            st.markdown("**Give the bill to the patient.** In this demo you download it here and upload "
+            st.markdown("**Give the bill to the patient.** In this demo you download it here, and upload "
                         "it as the customer in the next step.")
-            d1, d2 = st.columns(2)
-            d1.download_button("Download the bill (PDF)", pdf, f"{bill.bill_no.replace('/', '_')}.pdf",
+            st.download_button("Download the bill (PDF)", pdf, f"{bill.bill_no.replace('/', '_')}.pdf",
                                mime="application/pdf", key="h_dl", type="primary")
-            forged = render_altered(bill, bill.total_paise + 5000000, joined=True)
-            d2.download_button("Download a tampered copy", forged,
-                               f"{bill.bill_no.replace('/', '_')}_tampered.pdf", mime="application/pdf",
-                               key="h_dl_forged",
-                               help="Demo only: the same bill with its total raised by Rs 50,000, "
-                                    "as a forger would send it")
-            st.caption("The tampered copy exists only so the demo can show what happens to a forged bill. "
-                       "A hospital would never produce one.")
 
 
 def hospital_my_bills(ctx: Ctx) -> None:
