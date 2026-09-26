@@ -47,26 +47,36 @@ HOSPITALS = {
 # In the showcase only the first two have joined.
 SHOWCASE_JOINED = ["IN-HOSP-SAHYOG-PUN-0101", "IN-HOSP-AROGYA-NSK-0233"]
 
+# The six prepared bills are ONE coherent set: the same patient throughout, and every
+# file is explicitly related to the first, so a viewer can see what changed and why.
 SHOWCASE = [
     # (file, title, what it shows, expected verdict)
-    ("01_genuine_sahyog.pdf", "Genuine bill, hospital has joined",
-     "Proof clears: the issuer confirms every field.", "Authentic"),
-    ("02_altered_total_sahyog.pdf", "Total raised by Rs 1 lakh after issue",
-     "Two independent findings convict: the issuer's record and the file itself.", "Tampered"),
-    ("03_fabricated_sahyog.pdf", "Made from nothing, hospital has joined",
-     "Looks perfect, passes every appearance check; the issuer never issued it.", "Suspicious"),
-    ("04_genuine_shanti_not_joined.pdf", "Genuine bill, small hospital not yet joined",
-     "No proof is available, so it is referred, never cleared.", "Inconclusive"),
-    ("05_scan_arogya.pdf", "Genuine bill, arrived as a blurred photo",
-     "Unreadable is not wrong: 'could not read', never 'mismatch'.", "Inconclusive"),
-    ("06_fabricated_shanti_not_joined.pdf", "Made from nothing, hospital not joined",
-     "The honest gap: without the issuer, a clean fake cannot be told apart. "
-     "It is still never cleared.", "Inconclusive"),
+    ("01_genuine_bill.pdf", "Genuine bill (hospital has joined)",
+     "The bill as the hospital issued it. Proof clears: the hospital confirms every field.", "Authentic"),
+    ("02_same_bill_total_raised.pdf", "The SAME bill, total raised afterwards",
+     "Bill 1 with its total edited. Same bill number, so the hospital's record contradicts it, and the "
+     "file itself shows the edit.", "Tampered"),
+    ("03_made_from_nothing.pdf", "Made from nothing (hospital has joined)",
+     "Same patient and hospital, but a bill the hospital never issued. It passes every appearance "
+     "check; only the hospital can say it is not theirs.", "Suspicious"),
+    ("04_genuine_hospital_not_joined.pdf", "Genuine bill from a hospital that has not joined",
+     "The same patient at a hospital outside the registry. Nothing can be proven, so it is referred, "
+     "never cleared.", "Inconclusive"),
+    ("05_photo_of_bill_1.pdf", "A blurred photo of bill 1",
+     "The same genuine bill, sent as a phone photo. Unreadable is not wrong: it is never called a "
+     "mismatch.", "Inconclusive"),
+    ("06_made_from_nothing_not_joined.pdf", "Made from nothing, hospital not joined",
+     "The honest gap: with no issuer to ask, a clean fake cannot be told from a genuine bill. It is "
+     "still never cleared.", "Inconclusive"),
 ]
 
+# The patient on the prepared bills. The seeder passes the demo policyholder's name so
+# that the sample bills, the ledger and the seeded claims all agree.
+SHOWCASE_PATIENT = "Meera Kulkarni"
 
-def _meera_bill(ticket: str) -> BillFields:
-    """The bill used in the proposal's story: Rs 1,86,400 at Sahyog, Pune."""
+
+def _headline_bill(ticket: str, patient: str) -> BillFields:
+    """The bill used throughout the set: Rs 1,86,400 at Sahyog, Pune."""
     items = [
         LineItem("Room charges (semi-private)", 3600000),
         LineItem("Surgeon fee", 7200000),
@@ -76,7 +86,7 @@ def _meera_bill(ticket: str) -> BillFields:
         LineItem("Laboratory investigations", 950000),
     ]
     return BillFields("IN-HOSP-SAHYOG-PUN-0101", "Sahyog Multispeciality Hospital",
-                      "SMH/2026/004812", "2026-03-03", "Meera Kulkarni", items,
+                      "SMH/2026/004812", "2026-03-03", patient, items,
                       sum(i.amount_paise for i in items), ticket)
 
 
@@ -86,54 +96,53 @@ def _enrol(store: RegistryStore, ids: list[str]) -> None:
         store.enrol_issuer(issuer_id, name, city, prefix)
 
 
-def build_showcase(data_dir: Path = DATA_DIR) -> Path:
-    """Create the showcase registry and the six showcase bills. Returns the folder."""
+def build_showcase(data_dir: Path = DATA_DIR, patient: str = SHOWCASE_PATIENT) -> Path:
+    """Create the showcase registry and the six prepared bills. Returns the folder.
+
+    All six are for the SAME patient, and files 2 and 5 are the same bill as file 1
+    (edited, and photographed), so the set explains itself.
+    """
     store = RegistryStore(data_dir)
     _enrol(store, SHOWCASE_JOINED)
     sahyog = Publisher(store, "IN-HOSP-SAHYOG-PUN-0101")
-    arogya = Publisher(store, "IN-HOSP-AROGYA-NSK-0233")
     rng = random.Random(2026)
     out = data_dir / "showcase"
     out.mkdir(parents=True, exist_ok=True)
 
-    # 1 + 2: Meera's genuine bill, published by the hospital; then an altered copy.
-    meera = _meera_bill(sahyog.new_ticket())
-    background = [random_bill(rng, meera.issuer_id, meera.issuer_name, "SMH", 4800 + i, "2026-03-03")
+    # 1. The bill as issued, published by the hospital, plus that day's other bills.
+    bill = _headline_bill(sahyog.new_ticket(), patient)
+    background = [random_bill(rng, bill.issuer_id, bill.issuer_name, "SMH", 4800 + i, "2026-03-03")
                   for i in range(11)]
     for b in background:
         b.ticket = sahyog.new_ticket()
-    sahyog.publish([meera] + background)
-    (out / SHOWCASE[0][0]).write_bytes(render_genuine(meera, joined=True))
-    (out / SHOWCASE[1][0]).write_bytes(
-        render_altered(meera, meera.total_paise + 10_000_000, joined=True))
+    sahyog.publish([bill] + background)
+    (out / SHOWCASE[0][0]).write_bytes(render_genuine(bill, joined=True))
 
-    # 3: a fake typed from a blank page, with a well-formed ticket never issued.
-    fake = random_bill(rng, meera.issuer_id, meera.issuer_name, "SMH", 4907, "2026-03-11")
-    fake.ticket = sahyog.new_ticket()          # right format, but never published
+    # 2. The same bill, with its total raised afterwards in a PDF editor.
+    (out / SHOWCASE[1][0]).write_bytes(render_altered(bill, bill.total_paise + 10_000_000, joined=True))
+
+    # 3. A bill typed from a blank page: same patient and hospital, never issued.
+    fake = BillFields(**{**bill.__dict__, "bill_no": "SMH/2026/004907", "bill_date": "2026-03-11",
+                         "ticket": sahyog.new_ticket()})       # right format, never published
     (out / SHOWCASE[2][0]).write_bytes(render_fabricated(fake, joined=True))
 
-    # 4: a genuine bill from a hospital that has not joined (no ticket printed).
+    # 4. The same patient, at a hospital that has not joined the registry.
     name, _, _, bp = HOSPITALS["IN-HOSP-SHANTI-STR-0419"]
     shanti = random_bill(rng, "IN-HOSP-SHANTI-STR-0419", name, bp, 1187, "2026-03-07")
+    shanti.patient = patient
     (out / SHOWCASE[3][0]).write_bytes(render_genuine(shanti, joined=False))
 
-    # 5: a genuine, published Arogya bill that reached the insurer as a bad photo.
-    name, _, _, bp = HOSPITALS["IN-HOSP-AROGYA-NSK-0233"]
-    scan = random_bill(rng, "IN-HOSP-AROGYA-NSK-0233", name, bp, 2290, "2026-03-05")
-    scan.ticket = arogya.new_ticket()
-    arogya.publish([scan])
-    (out / SHOWCASE[4][0]).write_bytes(render_scan(scan, joined=True))
+    # 5. A blurred phone photo of bill 1.
+    (out / SHOWCASE[4][0]).write_bytes(render_scan(bill, joined=True, seed=3))
 
-    # 6: a fake in the name of the non-joined hospital.
-    name, _, _, bp = HOSPITALS["IN-HOSP-SHANTI-STR-0419"]
+    # 6. A fake in the name of the hospital that has not joined.
     fake2 = random_bill(rng, "IN-HOSP-SHANTI-STR-0419", name, bp, 1203, "2026-03-09")
+    fake2.patient = patient
     (out / SHOWCASE[5][0]).write_bytes(render_fabricated(fake2, joined=False))
 
-    # Every bill the showcase published, so the hospitals' own ledgers can list
-    # them (the registry and the ledger must always agree on what was issued).
+    # Every bill the showcase PUBLISHED, so the hospital's ledger and the registry agree.
     (out / "published_bills.json").write_text(json.dumps(
-        [{**b.__dict__, "items": [i.__dict__ for i in b.items]} for b in [meera] + background + [scan]],
-        indent=2))
+        [{**b.__dict__, "items": [i.__dict__ for i in b.items]} for b in [bill] + background], indent=2))
     (out / "manifest.json").write_text(json.dumps(
         [{"file": f, "title": t, "shows": s, "expected": e} for f, t, s, e in SHOWCASE], indent=2))
     return out

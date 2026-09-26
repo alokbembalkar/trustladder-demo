@@ -270,6 +270,8 @@ def officer_samples(ctx: Ctx) -> None:
                                  "saved as a claim.")
     manifest = json.loads((ctx.data_dir / "showcase" / "manifest.json").read_text())
     options = [f"{i + 1}. {m['title']}" for i, m in enumerate(manifest)]
+    st.caption("The six are one set: the same patient throughout, and bills 2 and 5 are bill 1 edited "
+               "and photographed.")
     c1, c2 = st.columns([3, 2], gap="large")
     with c1:
         choice = st.selectbox("A prepared bill", options, key="showcase_pick")

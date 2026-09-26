@@ -36,10 +36,10 @@ def _run(file_name):
 # ---------------------------------------------------------------- showcase
 
 def test_tc01_genuine_joined_is_authentic():
-    """TC-01. Steps: run 01_genuine_sahyog.pdf.
+    """TC-01. Steps: run 01_genuine_bill.pdf.
     Expected: Authentic, rule R1, registry Verified, Proof-grade, no human needed,
     reason opens 'This bill can be paid.'"""
-    r = _run("01_genuine_sahyog.pdf")
+    r = _run("01_genuine_bill.pdf")
     assert r.verdict is Verdict.AUTHENTIC and r.rule_applied.startswith("R1")
     assert r.registry_answer is RegistryAnswer.VERIFIED
     assert r.evidence_grade is EvidenceGrade.PROOF
@@ -49,11 +49,11 @@ def test_tc01_genuine_joined_is_authentic():
 
 
 def test_tc02_altered_total_is_tampered():
-    """TC-02. Steps: run 02_altered_total_sahyog.pdf (total raised by Rs 1 lakh).
+    """TC-02. Steps: run 02_same_bill_total_raised.pdf (bill 1 with Rs 1 lakh added).
     Expected: Tampered (High), rule R2, registry Mismatch, screening finds the
     arithmetic break, the layered re-save and the foreign font; reason quotes
     both amounts in Indian format."""
-    r = _run("02_altered_total_sahyog.pdf")
+    r = _run("02_same_bill_total_raised.pdf")
     assert r.verdict is Verdict.TAMPERED and r.risk == "High" and r.rule_applied.startswith("R2")
     assert r.registry_answer is RegistryAnswer.MISMATCH
     assert {f.family for f in r.findings} == {"arithmetic", "file history", "fonts"}
@@ -61,10 +61,10 @@ def test_tc02_altered_total_is_tampered():
 
 
 def test_tc03_fabricated_joined_passes_every_check_but_is_not_cleared():
-    """TC-03. Steps: run 03_fabricated_sahyog.pdf (typed from a blank page).
+    """TC-03. Steps: run 03_made_from_nothing.pdf (typed from a blank page).
     Expected: ZERO screening findings (appearance checks cannot see it), registry
     No record, verdict Suspicious via R5, sent to a person."""
-    r = _run("03_fabricated_sahyog.pdf")
+    r = _run("03_made_from_nothing.pdf")
     assert r.findings == []
     assert r.registry_answer is RegistryAnswer.NO_RECORD
     assert r.verdict is Verdict.SUSPICIOUS and r.rule_applied.startswith("R5")
@@ -72,10 +72,10 @@ def test_tc03_fabricated_joined_passes_every_check_but_is_not_cleared():
 
 
 def test_tc04_genuine_not_joined_is_referred_not_cleared():
-    """TC-04. Steps: run 04_genuine_shanti_not_joined.pdf.
+    """TC-04. Steps: run 04_genuine_hospital_not_joined.pdf.
     Expected: registry Not covered, verdict Inconclusive via R8,
     Consistency-grade, sent to a person, reason says it is not proof."""
-    r = _run("04_genuine_shanti_not_joined.pdf")
+    r = _run("04_genuine_hospital_not_joined.pdf")
     assert r.registry_answer is RegistryAnswer.NOT_COVERED
     assert r.verdict is Verdict.INCONCLUSIVE and r.rule_applied.startswith("R8")
     assert r.evidence_grade is EvidenceGrade.CONSISTENCY
@@ -83,10 +83,10 @@ def test_tc04_genuine_not_joined_is_referred_not_cleared():
 
 
 def test_tc05_unreadable_scan_is_never_a_mismatch():
-    """TC-05. Steps: run 05_scan_arogya.pdf (genuine, published, but a blurred photo).
+    """TC-05. Steps: run 05_photo_of_bill_1.pdf (a blurred photo of bill 1).
     Expected: Could not read, registry NOT consulted, Inconclusive via R0, queue
     'Could-not-read', and the word 'Mismatch' appears nowhere in the result."""
-    r = _run("05_scan_arogya.pdf")
+    r = _run("05_photo_of_bill_1.pdf")
     assert r.read_status is ReadStatus.COULD_NOT_READ
     assert r.registry_answer is RegistryAnswer.NOT_ASKED
     assert r.verdict is Verdict.INCONCLUSIVE and r.rule_applied.startswith("R0")
@@ -95,9 +95,9 @@ def test_tc05_unreadable_scan_is_never_a_mismatch():
 
 
 def test_tc06_fabricated_not_joined_is_the_honest_gap():
-    """TC-06. Steps: run 06_fabricated_shanti_not_joined.pdf.
+    """TC-06. Steps: run 06_made_from_nothing_not_joined.pdf.
     Expected: indistinguishable from TC-04 (Inconclusive via R8), and never Authentic."""
-    r = _run("06_fabricated_shanti_not_joined.pdf")
+    r = _run("06_made_from_nothing_not_joined.pdf")
     assert r.verdict is Verdict.INCONCLUSIVE and r.rule_applied.startswith("R8")
 
 
@@ -208,9 +208,9 @@ def test_tc13_reason_never_contradicts_verdict():
     """TC-13. Steps: run all six showcase bills; then feed check_back a reason
     carrying another verdict's opening.
     Expected: every reason passes check_back; the contradicting one fails."""
-    for f in ["01_genuine_sahyog.pdf", "02_altered_total_sahyog.pdf", "03_fabricated_sahyog.pdf",
-              "04_genuine_shanti_not_joined.pdf", "05_scan_arogya.pdf",
-              "06_fabricated_shanti_not_joined.pdf"]:
+    for f in ["01_genuine_bill.pdf", "02_same_bill_total_raised.pdf", "03_made_from_nothing.pdf",
+              "04_genuine_hospital_not_joined.pdf", "05_photo_of_bill_1.pdf",
+              "06_made_from_nothing_not_joined.pdf"]:
         r = _run(f)
         assert r.reason.startswith(_OPENERS[r.verdict])
     d = decide(ReadStatus.OK, RegistryAnswer.NOT_COVERED, [])
@@ -238,7 +238,7 @@ def test_tc15_real_ticket_on_a_different_bill():
     Expected: Mismatch alone -> Suspicious via R3 (a person re-reads before
     anyone is held), not Tampered."""
     store = RegistryStore(DATA_DIR)
-    genuine = read_bill((DATA_DIR / "showcase" / "01_genuine_sahyog.pdf").read_bytes())[1]
+    genuine = read_bill((DATA_DIR / "showcase" / "01_genuine_bill.pdf").read_bytes())[1]
     other = copy.deepcopy(genuine)
     other.patient = "Someone Else"
     r = run_ladder(render_genuine(other, joined=True), Verifier(store))
@@ -253,7 +253,7 @@ def test_tc16_freshly_issued_bill_verifies_immediately():
     Expected: Authentic (Verified) straight after publication."""
     store = RegistryStore(DATA_DIR)
     verifier = Verifier(store)
-    _ = run_ladder((DATA_DIR / "showcase" / "01_genuine_sahyog.pdf").read_bytes(), verifier)
+    _ = run_ladder((DATA_DIR / "showcase" / "01_genuine_bill.pdf").read_bytes(), verifier)
     pub = Publisher(store, "IN-HOSP-AROGYA-NSK-0233")
     bill = BillFields("IN-HOSP-AROGYA-NSK-0233", HOSPITALS["IN-HOSP-AROGYA-NSK-0233"][0],
                       "ANH/2026/007777", "2026-03-20", "Kavya Menon",
@@ -271,9 +271,9 @@ def test_tc17_evidence_graph_agrees_with_the_rule():
     exactly 1; Authentic has proof and 0 against; the counts match the rule's
     own family arithmetic; DOT output names the rule and the verdict."""
     from trustladder import evidence
-    for f in ["01_genuine_sahyog.pdf", "02_altered_total_sahyog.pdf", "03_fabricated_sahyog.pdf",
-              "04_genuine_shanti_not_joined.pdf", "05_scan_arogya.pdf",
-              "06_fabricated_shanti_not_joined.pdf"]:
+    for f in ["01_genuine_bill.pdf", "02_same_bill_total_raised.pdf", "03_made_from_nothing.pdf",
+              "04_genuine_hospital_not_joined.pdf", "05_photo_of_bill_1.pdf",
+              "06_made_from_nothing_not_joined.pdf"]:
         r = _run(f)
         g = evidence.build(r)
         expected = len({x.family for x in r.findings}) + (
@@ -287,3 +287,27 @@ def test_tc17_evidence_graph_agrees_with_the_rule():
             assert g.proof and g.independent_against == 0
         dot = evidence.to_dot(r, g)
         assert r.verdict.value in dot and r.rule_applied.split(":")[0] in dot
+
+
+def test_tc18_the_prepared_bills_are_one_coherent_set():
+    """TC-18. Steps: read all six prepared bills.
+    Expected: one patient across the set; bills 1, 2 and 5 are the SAME bill (same
+    number, and 5 is a photo of it); 2 differs from 1 only by a raised total; 3 uses
+    the same hospital as 1 but a number it never issued; 4 and 6 are the hospital that
+    has not joined. Nothing in the set is an unexplained stranger."""
+    import json
+    files = json.loads((DATA_DIR / "showcase" / "manifest.json").read_text())
+    read = {}
+    for m in files:
+        status, fields, _ = read_bill((DATA_DIR / "showcase" / m["file"]).read_bytes())
+        read[m["file"]] = fields
+    readable = [f for f in read.values() if f]
+    assert len({f.patient for f in readable}) == 1, "the set must be about one patient"
+    one, two = read["01_genuine_bill.pdf"], read["02_same_bill_total_raised.pdf"]
+    assert two.bill_no == one.bill_no and two.issuer_id == one.issuer_id
+    assert two.total_paise > one.total_paise and two.items == one.items, "only the total was edited"
+    assert read["05_photo_of_bill_1.pdf"] is None, "file 5 is a photo: it cannot be read"
+    three = read["03_made_from_nothing.pdf"]
+    assert three.issuer_id == one.issuer_id and three.bill_no != one.bill_no
+    for name in ("04_genuine_hospital_not_joined.pdf", "06_made_from_nothing_not_joined.pdf"):
+        assert read[name].issuer_id == "IN-HOSP-SHANTI-STR-0419"

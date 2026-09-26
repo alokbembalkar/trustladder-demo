@@ -208,7 +208,7 @@ def test_tc47_risk_policy_change_routes_new_claims():
     at.selectbox(key="pol_Inconclusive").set_value("Ask customer for original").run()
     assert _store().policy()["Inconclusive"] == "Ask customer for original"
     assert any(e["event"].startswith("Policy: Inconclusive") for e in _store().audit())
-    pdf = (DATA_DIR / "showcase" / "04_genuine_shanti_not_joined.pdf").read_bytes()
+    pdf = (DATA_DIR / "showcase" / "04_genuine_hospital_not_joined.pdf").read_bytes()
     cid = submit_claim(_store(), Verifier(RegistryStore(DATA_DIR)), "CUST-001", pdf, "shanti.pdf")
     c = _store().claim(cid)
     assert c["verdict"] == "Inconclusive" and c["status"] == "Waiting for customer"
@@ -325,7 +325,7 @@ def test_tc54_duplicate_claim_is_refused():
     second claim is created."""
     store = _store()
     verifier = Verifier(RegistryStore(DATA_DIR))
-    pdf = (DATA_DIR / "showcase" / "01_genuine_sahyog.pdf").read_bytes()
+    pdf = (DATA_DIR / "showcase" / "01_genuine_bill.pdf").read_bytes()
     bill_no = read_bill(pdf)[1].bill_no
     before = store.measures()["claims"]
     submit_claim(store, verifier, "CUST-002", pdf, "bill.pdf")

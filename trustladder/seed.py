@@ -79,13 +79,14 @@ def _bill_for(rng, issuer_id, customer, serial, day) -> BillFields:
     return b
 
 
+# The pack people download is exactly the showcase set, with its own descriptions.
 SAMPLE_PACK = [
-    ("01_genuine_bill.pdf", "01_genuine_sahyog.pdf", "Genuine bill from a hospital that has joined", "Authentic"),
-    ("02_total_changed_after_issue.pdf", "02_altered_total_sahyog.pdf", "The total was raised by Rs 1 lakh after the bill was issued", "Tampered"),
-    ("03_made_from_nothing.pdf", "03_fabricated_sahyog.pdf", "Typed from a blank page; looks perfect", "Suspicious"),
-    ("04_genuine_hospital_not_joined.pdf", "04_genuine_shanti_not_joined.pdf", "Genuine, but the hospital has not joined the registry", "Inconclusive"),
-    ("05_blurred_photo.pdf", "05_scan_arogya.pdf", "Genuine bill sent as a blurred photo", "Inconclusive"),
-    ("06_made_from_nothing_not_joined.pdf", "06_fabricated_shanti_not_joined.pdf", "Fake from a hospital that has not joined", "Inconclusive"),
+    ("01_genuine_bill.pdf", "Bill 1: genuine, from a hospital that has joined", "Authentic"),
+    ("02_same_bill_total_raised.pdf", "Bill 1 with its total raised afterwards (same bill number)", "Tampered"),
+    ("03_made_from_nothing.pdf", "Same patient and hospital, but a bill the hospital never issued", "Suspicious"),
+    ("04_genuine_hospital_not_joined.pdf", "Genuine, from a hospital that has not joined", "Inconclusive"),
+    ("05_photo_of_bill_1.pdf", "A blurred phone photo of bill 1", "Inconclusive"),
+    ("06_made_from_nothing_not_joined.pdf", "A fake from a hospital that has not joined", "Inconclusive"),
 ]
 
 
@@ -94,12 +95,14 @@ def build_sample_pack(data_dir: Path = DATA_DIR) -> Path:
     import zipfile
     out = Path(data_dir) / "sample_bills"
     out.mkdir(parents=True, exist_ok=True)
-    readme = ["TrustLadder sample bills (synthetic: fictional hospitals, patients and amounts).",
+    readme = ["TrustLadder sample bills (synthetic: fictional hospital, patient and amounts).",
+              "All six are for the same patient. Files 2 and 5 are the same bill as file 1, edited and",
+              "photographed, so you can see exactly what changed.",
               "Upload any of these in the portal: Customer -> Submit a claim, or Claims officer -> Check any bill.",
               ""]
-    for friendly, source, what, expected in SAMPLE_PACK:
-        (out / friendly).write_bytes((Path(data_dir) / "showcase" / source).read_bytes())
-        readme.append(f"{friendly}\n    {what}\n    Expected verdict: {expected}\n")
+    for name, what, expected in SAMPLE_PACK:
+        (out / name).write_bytes((Path(data_dir) / "showcase" / name).read_bytes())
+        readme.append(f"{name}\n    {what}\n    Expected verdict: {expected}\n")
     (out / "README.txt").write_text("\n".join(readme))
     zip_path = Path(data_dir) / "TrustLadder_sample_bills.zip"
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
@@ -116,7 +119,7 @@ def build_world(data_dir: Path = DATA_DIR) -> Store:
     data_dir.mkdir(parents=True)
 
     # 1. The six sample bills and the simulated month (unchanged from before).
-    build_showcase(data_dir)
+    build_showcase(data_dir, patient=CUSTOMERS[0][1])   # the prepared bills belong to this policyholder
     build_simulation(data_dir)
     build_sample_pack(data_dir)
 
@@ -153,7 +156,7 @@ def build_world(data_dir: Path = DATA_DIR) -> Store:
     # 2. Meera's own story (the customer login).
     #    a) the Sahyog bill from the proposal, Rs 1,86,400: already published by the showcase.
     showcase = data_dir / "showcase"
-    meera_pdf = (showcase / "01_genuine_sahyog.pdf").read_bytes()
+    meera_pdf = (showcase / "01_genuine_bill.pdf").read_bytes()
     mf = read_bill(meera_pdf)[1]
     store.add_bill(mf.bill_no, mf.issuer_id, mf.issuer_name, meera[0], mf.patient, mf.bill_date,
                    mf.total_paise, mf.ticket, True, meera_pdf, "2026-03-03 11:20")
