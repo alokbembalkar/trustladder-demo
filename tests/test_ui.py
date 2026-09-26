@@ -19,7 +19,9 @@ from streamlit.testing.v1 import AppTest
 from trustladder.cases import DATA_DIR
 from trustladder.registry import RegistryStore, Verifier
 from trustladder.seed import DEMO_PASSWORD, db_path, restore_snapshot
-from trustladder.service import submit_claim
+from trustladder.bills import render_altered
+from trustladder.reader import read_bill
+from trustladder.service import DuplicateClaim, submit_claim
 from trustladder.store import Store
 
 APP = str(Path(__file__).resolve().parent.parent / "app.py")
@@ -93,7 +95,7 @@ def test_tc41_each_role_lands_on_its_own_home_with_its_own_menu():
     """TC-41. Steps: sign in as each of the six role users.
     Expected: no exception; the menu holds exactly that role's items; the first
     page is the role's home; the sidebar shows the role badge."""
-    homes = {"hospital": "Issue a bill", "customer": "Hello, Meera", "officer": "Claims inbox",
+    homes = {"hospital": "Issue a bill", "customer": "Your claims", "officer": "Claims inbox",
              "riskhead": "Dashboard", "registry": "Network", "auditor": "Audit trail"}
     for role, items in MENUS.items():
         at = _login(role)
@@ -130,34 +132,32 @@ def test_tc43_sign_out():
 # ---------------------------------------------------------------- the cross-role story
 
 def test_tc44_hospital_to_customer_to_officer_to_auditor():
-    """TC-44. Steps: the hospital issues a bill to Meera; Meera submits it as a
-    claim; the officer opens All claims; the auditor searches the trail.
-    Expected: the bill appears in Meera's documents; the claim is Paid on proof
-    (Authentic); the officer's list shows it; the auditor sees the issue and the
-    verdict events."""
+    """TC-44. Steps: the hospital issues a bill on screen; the customer submits that
+    exact PDF; the officer and the auditor then look.
+    Expected: the claim is Paid on proof, carries the bill number read from the
+    uploaded PDF, appears in the customer's claims, and both the issue and the
+    verdict are in the audit trail."""
     at = _login("hospital")
-    patient = at.selectbox(key="h_patient")
-    patient.select_index(patient.options.index("Meera Kulkarni (Pune)")).run()
     at.button(key="h_issue").click().run()
     assert not at.exception
     ok = next(s.value for s in at.success if "Ticket printed on the bill" in s.value)
     bill_no = re.search(r"Issued (\S+)", ok).group(1)
 
-    at = _go(_login("customer"), "customer", "Submit a claim")
-    option = next(o for o in at.radio(key="cs_pick").options if bill_no in o)
-    at.radio(key="cs_pick").set_value(option).run()
-    at.button(key="cs_submit").click().run()
-    claim = _store().claim(at.session_state["cs_last"])
+    store = _store()
+    pdf = store.bill_pdf(bill_no)                       # exactly the file the customer downloads
+    claim_id = submit_claim(store, Verifier(RegistryStore(DATA_DIR)), "CUST-001", pdf,
+                            f"{bill_no.replace('/', '_')}.pdf")
+    claim = store.claim(claim_id)
     assert claim["verdict"] == "Authentic" and claim["status"] == "Paid"
-    assert "Paid" in _texts(at)
+    assert claim["bill_no"] == bill_no, "the uploaded claim must link to the bill it came from"
 
-    assert claim["claim_id"] in [c["claim_id"] for c in _store().claims()]
-
+    at = _login("customer")
+    assert claim_id in _texts(at)
     at = _login("auditor")
-    at.text_input(key="aud_q").input(claim["claim_id"]).run()
+    at.text_input(key="aud_q").input(claim_id).run()
     events = at.dataframe[0].value["Event"].tolist()
     assert "Claim submitted" in events and "Authentic (R1)" in events
-    assert any(e["event"] == "Bill issued and published" for e in _store().audit())
+    assert any(e["event"] == "Bill issued and published" for e in store.audit())
 
 
 def test_tc45_customer_sends_clearer_copy():
@@ -252,21 +252,18 @@ def test_tc49_sample_data_is_complete_and_consistent():
 
 
 def test_tc50_presenter_switches_roles_and_resets():
-    """TC-50. Steps: sign in as presenter; issue a bill on step 1; Next; submit the
-    claim on step 2; press Reset demo.
-    Expected: the guided steps switch role and screen; after Reset the world is
-    back to 34 claims."""
+    """TC-50. Steps: sign in as presenter; issue a bill on step 1; press Reset demo.
+    Expected: step 1 is the hospital's screen; the bill is really created; Reset puts
+    the world back to the seeded 34 claims and returns to step 1."""
     at = _login("presenter")
     assert at.radio(key="nav_hospital").options == MENUS["hospital"]      # step 1 = hospital
-    patient = at.selectbox(key="h_patient")
-    patient.select_index(patient.options.index("Meera Kulkarni (Pune)")).run()
+    before = len(_store().bills_of_issuer("IN-HOSP-SAHYOG-PUN-0101"))
     at.button(key="h_issue").click().run()
-    at.button(key="step_next").click().run()                             # step 2 = customer
-    assert at.radio(key="nav_customer").value == "Submit a claim"
-    at.button(key="cs_submit").click().run()          # newest document = the bill just issued
-    assert _store().measures()["claims"] == 35
+    assert len(_store().bills_of_issuer("IN-HOSP-SAHYOG-PUN-0101")) == before + 1
     at.button(key="reset").click().run()
     assert _store().measures()["claims"] == 34
+    assert len(_store().bills_of_issuer("IN-HOSP-SAHYOG-PUN-0101")) == before
+    assert at.session_state["step"] == 0
 
 
 @pytest.mark.parametrize("index", range(6))
@@ -323,15 +320,19 @@ def test_tc53_verdict_view_has_ai_inside_and_evidence_graph():
 
 
 def test_tc54_duplicate_claim_is_refused():
-    """TC-54. Steps: Meera picks a bill she has already claimed and presses Submit.
-    Expected: a warning names the bill as already claimed; no new claim is created."""
-    before = _store().measures()["claims"]
-    at = _go(_login("customer"), "customer", "Submit a claim")
-    option = next(o for o in at.radio(key="cs_pick").options if "already claimed" in o)
-    at.radio(key="cs_pick").set_value(option).run()
-    at.button(key="cs_submit").click().run()
-    assert any("already been claimed" in w.value for w in at.warning)
-    assert _store().measures()["claims"] == before
+    """TC-54. Steps: submit the same bill PDF twice for the same policy.
+    Expected: the second attempt is refused as a duplicate, naming the bill, and no
+    second claim is created."""
+    store = _store()
+    verifier = Verifier(RegistryStore(DATA_DIR))
+    pdf = (DATA_DIR / "showcase" / "01_genuine_sahyog.pdf").read_bytes()
+    bill_no = read_bill(pdf)[1].bill_no
+    before = store.measures()["claims"]
+    submit_claim(store, verifier, "CUST-002", pdf, "bill.pdf")
+    with pytest.raises(DuplicateClaim) as dup:
+        submit_claim(store, verifier, "CUST-002", pdf, "bill_again.pdf")
+    assert str(dup.value) == bill_no
+    assert store.measures()["claims"] == before + 1
 
 
 def test_tc55_simple_by_default():
@@ -353,18 +354,19 @@ def test_tc55_simple_by_default():
 
 
 def test_tc56_guided_steps_for_the_presenter():
-    """TC-56. Steps: sign in as presenter; press Next through all seven steps.
-    Expected: every step shows a 'Do:' and a 'Say:' line; the role changes as
-    planned (hospital, customer, officer, officer, risk head, registry, auditor);
-    Back is disabled on step 1 and Next on the last step; no exceptions."""
-    expected = ["hospital", "customer", "officer", "officer", "riskhead", "registry", "auditor"]
+    """TC-56. Steps: sign in as presenter; press Next through every step.
+    Expected: each step shows a 'Do:' and a 'Say:' line and switches to the right
+    LOGIN (the two customers are different accounts); Back is disabled on the first
+    step and Next on the last; no exceptions."""
+    expected = ["hospital", "customer", "customer2", "officer", "officer", "riskhead", "registry",
+                "auditor"]
     at = _login("presenter")
     assert at.button(key="step_back").disabled
-    for i, role in enumerate(expected):
+    for i, login in enumerate(expected):
         texts = _texts(at)
         assert "<b>Do:</b>" in texts and "Say:" in texts, i
-        from trustladder.store import ROLES
-        assert f'<span class="tl-role">{ROLES[role]}</span>' in texts, (i, role)
+        shown = _store().user(login)["name"]
+        assert f"**{shown}**" in texts, (i, login)
         assert not at.exception, i
         if i < len(expected) - 1:
             at.button(key="step_next").click().run()
@@ -372,46 +374,62 @@ def test_tc56_guided_steps_for_the_presenter():
 
 
 def test_tc57_the_demo_story_follows_one_bill():
-    """TC-57. Steps: as presenter, issue a bill on step 1; Next; submit it on step 2;
-    Next; press the 'forged copy' button on step 3.
-    Expected: the claim the officer opens is for the SAME hospital and the SAME bill
-    number that was just issued, is Tampered, and is preselected in the inbox; the
-    customer's paid claim and the forged one are two different claims."""
-    at = _login("presenter")
-    patient = at.selectbox(key="h_patient")
-    patient.select_index(patient.options.index("Meera Kulkarni (Pune)")).run()
+    """TC-57. Steps: the hospital issues a bill; the customer uploads it; a SECOND
+    customer uploads the tampered copy of the same bill.
+    Expected: both claims carry the same hospital and bill number; the genuine one is
+    Authentic and Paid; the tampered one is Tampered and On hold, and is the claim the
+    officer's inbox opens."""
+    at = _login("hospital")
     at.button(key="h_issue").click().run()
     bill_no = re.search(r"Issued (\S+)", next(s.value for s in at.success)).group(1)
-    at.button(key="step_next").click().run()
-    assert "just issued to you" in at.radio(key="cs_pick").value          # preselected for the story
-    at.button(key="cs_submit").click().run()
-    paid = _store().claim(at.session_state["cs_last"])
-    assert paid["bill_no"] == bill_no and paid["status"] == "Paid"
-    at.button(key="step_next").click().run()
-    at.button(key="step_action_2").click().run()
-    forged = _store().claim(at.session_state["story_claim"])
-    assert forged["claim_id"] != paid["claim_id"]
-    assert forged["issuer_name"] == paid["issuer_name"], "the story must stay with one hospital"
+    store, verifier = _store(), Verifier(RegistryStore(DATA_DIR))
+    pdf = store.bill_pdf(bill_no)
+    bill = read_bill(pdf)[1]
+    paid = store.claim(submit_claim(store, verifier, "CUST-001", pdf, "bill.pdf"))
+    tampered_pdf = render_altered(bill, bill.total_paise + 5000000, joined=True)
+    forged = store.claim(submit_claim(store, verifier, "CUST-002", tampered_pdf, "bill_tampered.pdf"))
+    assert paid["verdict"] == "Authentic" and paid["status"] == "Paid"
     assert forged["verdict"] == "Tampered" and forged["status"] == "On hold"
-    assert forged["claim_id"] in at.selectbox(key="inbox_pick").value      # opened for the officer
-    assert any(f"bill {bill_no}" in m.value for m in at.markdown)          # same bill, on screen
-    assert _verdict(at) == "Tampered"
+    assert forged["bill_no"] == paid["bill_no"] == bill_no, "one bill, two claims"
+    assert forged["issuer_name"] == paid["issuer_name"]
+    assert forged["customer_id"] != paid["customer_id"], "a different person submitted the copy"
+    at = _login("officer")
+    # worst first, newest first: the claim just submitted is the one the officer opens
+    assert forged["claim_id"] in at.selectbox(key="inbox_pick").value
+    assert f"bill {bill_no}" in _texts(at)
 
 
 def test_tc58_upload_is_offered_everywhere_with_sample_bills():
-    """TC-58. Steps: customer → Submit a claim → choose 'Upload a bill (PDF)';
-    officer → Check any bill.
-    Expected: both screens offer an upload without switching anything on, both offer
-    the six sample bills as a zip, and the zip holds the six named PDFs plus a README."""
-    import zipfile, io
+    """TC-58. Steps: customer → Submit a claim; officer → Check any bill.
+    Expected: the customer's only route is an upload (no document list), both screens
+    offer an uploader and the six sample bills as a zip, and Submit is disabled until
+    a file is chosen; the zip holds six named PDFs and a README."""
+    import zipfile
     at = _go(_login("customer"), "customer", "Submit a claim")
-    assert at.radio(key="cs_source").options == ["From my documents", "Upload a bill (PDF)"]
-    at.radio(key="cs_source").set_value("Upload a bill (PDF)").run()
+    assert at.get("file_uploader"), "the customer must be able to upload"
+    assert not [r for r in at.radio if r.key in ("cs_pick", "cs_source")], "no document list any more"
+    assert at.button(key="cs_submit").disabled, "Submit waits for a file"
     assert any(b.label.startswith("Download 6 sample bills") for b in at.get("download_button"))
     at = _go(_login("officer"), "officer", "Check any bill")
+    assert at.get("file_uploader")
     assert any(b.label.startswith("Download 6 sample bills") for b in at.get("download_button"))
-    assert at.get("file_uploader"), "the officer can upload a bill without switching anything on"
-    pack = DATA_DIR / "TrustLadder_sample_bills.zip"
-    names = zipfile.ZipFile(pack).namelist()
+    names = zipfile.ZipFile(DATA_DIR / "TrustLadder_sample_bills.zip").namelist()
     assert len([n for n in names if n.endswith(".pdf")]) == 6
     assert any(n.endswith("README.txt") for n in names)
+
+
+def test_tc59_separate_logins_and_no_person_hardcoded_in_the_screens():
+    """TC-59. Steps: sign in as each of the eight logins and read the sidebar.
+    Expected: eight working logins including two separate customers; the screens name
+    roles, not people, so no seeded person's name appears in the interface."""
+    store = _store()
+    for uid in ("hospital", "customer", "customer2", "officer", "riskhead", "registry", "auditor",
+                "presenter"):
+        assert store.authenticate(uid, DEMO_PASSWORD), uid
+    assert store.user("customer")["customer_id"] != store.user("customer2")["customer_id"]
+    for uid, shown in (("customer", "Customer"), ("customer2", "Second customer"),
+                       ("officer", "Claims officer"), ("hospital", "Billing desk")):
+        at = _login(uid)
+        texts = _texts(at)
+        assert f"**{shown}**" in texts, uid
+        assert "Meera" not in texts, f"{uid}: screens must not hard-code a person"

@@ -28,12 +28,14 @@ import pandas as pd
 import streamlit as st
 
 from trustladder import crypto
+from trustladder.bills import render_altered
 from trustladder.cases import HOSPITALS
 from trustladder.models import BillFields, LineItem
 from trustladder.pipeline import run_ladder
 from trustladder.policy import ALLOWED, COST_PER_HOUR_RS, MINUTES_PER_REVIEW, baseline, evaluate
 from trustladder.registry import RegistryStore, Verifier
-from trustladder.service import enrol_hospital, issue_bill, resubmit_claim, submit_claim
+from trustladder.service import (DuplicateClaim, enrol_hospital, issue_bill, resubmit_claim,
+                                 submit_claim)
 from trustladder.store import CUSTOMER_TEXT, OPEN_STATUSES, Store, result_from_json
 
 from . import components as C
@@ -74,8 +76,6 @@ def hospital_issue(ctx: Ctx) -> None:
     customers = ctx.store.customers()
     c1, c2 = st.columns([1, 1], gap="large")
     with c1:
-        # Meera (the customer with a login) first, so the demo story needs no extra click.
-        customers.sort(key=lambda c: (c["customer_id"] != "CUST-001", c["name"]))
         cust = st.selectbox("Patient", customers, format_func=lambda c: f"{c['name']} ({c['city']})",
                             key="h_patient")
         bill_date = st.date_input("Bill date", _dt.date(2026, 3, 21), key="h_date")
@@ -98,8 +98,8 @@ def hospital_issue(ctx: Ctx) -> None:
     issued = st.session_state.get("h_issued")
     if issued:
         bill, pdf = issued
-        st.success(f"Issued {bill.bill_no} to {bill.patient} for {inr(bill.total_paise)}. Ticket printed on "
-                   f"the bill: **{bill.ticket}**. A copy is now in {bill.patient}'s documents.")
+        st.success(f"Issued {bill.bill_no} for {inr(bill.total_paise)}. "
+                   f"Ticket printed on the bill: **{bill.ticket}**")
         p1, p2 = st.columns([2, 3], gap="large")
         p1.image(C.preview_png(pdf), width="stretch")
         with p2:
@@ -111,8 +111,19 @@ def hospital_issue(ctx: Ctx) -> None:
                                     "entries": [[k[:20] + "…", v[:20] + "…"] for k, v in batch["entries"]],
                                     "signature": batch["signature"][:20] + "…"}, indent=2, ensure_ascii=False),
                         language="json")
-            st.download_button("Download the bill (PDF)", pdf, f"{bill.bill_no.replace('/', '_')}.pdf",
-                               mime="application/pdf", key="h_dl")
+            st.markdown("**Give the bill to the patient.** In this demo you download it here and upload "
+                        "it as the customer in the next step.")
+            d1, d2 = st.columns(2)
+            d1.download_button("Download the bill (PDF)", pdf, f"{bill.bill_no.replace('/', '_')}.pdf",
+                               mime="application/pdf", key="h_dl", type="primary")
+            forged = render_altered(bill, bill.total_paise + 5000000, joined=True)
+            d2.download_button("Download a tampered copy", forged,
+                               f"{bill.bill_no.replace('/', '_')}_tampered.pdf", mime="application/pdf",
+                               key="h_dl_forged",
+                               help="Demo only: the same bill with its total raised by Rs 50,000, "
+                                    "as a forger would send it")
+            st.caption("The tampered copy exists only so the demo can show what happens to a forged bill. "
+                       "A hospital would never produce one.")
 
 
 def hospital_my_bills(ctx: Ctx) -> None:
@@ -138,7 +149,7 @@ def hospital_my_bills(ctx: Ctx) -> None:
 
 def customer_claims(ctx: Ctx) -> None:
     cid = ctx.user["customer_id"]
-    page_title(f"Hello, {ctx.user['name'].split()[0]}", "Your claims, in plain words.")
+    page_title("Your claims", "Where each claim stands, in plain words.")
     claims = ctx.store.claims(customer_id=cid)
     kpis([(str(len(claims)), "claims"),
           (str(sum(c["status"].startswith("Paid") for c in claims)), "paid"),
@@ -170,54 +181,35 @@ def customer_claims(ctx: Ctx) -> None:
 
 
 def customer_submit(ctx: Ctx) -> None:
+    """The customer's only way in: upload the bill PDF the hospital gave them."""
     cid = ctx.user["customer_id"]
-    page_title("Submit a claim", "Choose a bill your hospital sent you, or upload one. It is checked the "
-                                 "moment you submit.")
-    docs = ctx.store.documents_of_customer(cid)
-    claimed = {c["bill_no"] for c in ctx.store.claims(customer_id=cid) if c["bill_no"]}
-    options = {}
-    for d in docs:
-        label = f"{d['issuer_name']} · {d['bill_date']} · {inr(d['total_paise'])} · {d['bill_no']}"
-        if d["bill_no"] in claimed:
-            label += "  (already claimed)"
-        elif d["bill_no"] == st.session_state.get("story_bill"):
-            label += "  ← just issued to you"
-        options[label] = d["bill_no"]
-    # put the bill from the demo story first, so nothing has to be hunted for
-    order = sorted(options, key=lambda k: (options[k] != st.session_state.get("story_bill"),
-                                           "already claimed" in k))
-    source = st.radio("How do you want to claim?", ["From my documents", "Upload a bill (PDF)"],
-                      horizontal=True, key="cs_source")
-    pdf = name = bill_no = None
-    if source == "From my documents":
-        pick = st.radio("My documents", order or ["(no documents yet)"], key="cs_pick",
-                        label_visibility="collapsed")
-        if pick in options:
-            bill_no = options[pick]
-    else:
-        up = st.file_uploader("Upload a bill (PDF)", type=["pdf"], key="cs_upload")
-        if up is not None:
-            pdf, name, bill_no = up.getvalue(), up.name, ""
+    page_title("Submit a claim", "Upload the bill your hospital gave you. It is checked the moment you "
+                                 "submit, and you see the result straight away.")
+    up = st.file_uploader("Your bill (PDF)", type=["pdf"], key="cs_upload")
+    c1, c2 = st.columns([1, 3])
+    submitted = c1.button("Submit claim", type="primary", key="cs_submit", disabled=up is None)
+    with c2:
         sample_pack_button(ctx, "cs_pack")
-    if st.button("Submit claim", type="primary", key="cs_submit"):
-        if pdf is None:
-            if bill_no is None:
-                st.warning("Choose a document, or upload a PDF first.")
-                return
-            if bill_no in claimed:
-                # the insurer's ordinary duplicate check: one bill, one claim
-                st.warning(f"{bill_no} has already been claimed. See My claims for where it stands.")
-                return
-            pdf, name = ctx.store.bill_pdf(bill_no), f"{bill_no.replace('/', '_')}.pdf"
-        st.session_state.cs_last = submit_claim(ctx.store, ctx.verifier, cid, pdf, name, bill_no or "",
-                                                actor=ctx.user["name"])
+    if up is not None and not submitted:
+        st.caption("Ready to submit:")
+        st.image(C.preview_png(up.getvalue()), width=430)
+    if submitted:
+        try:
+            st.session_state.cs_last = submit_claim(ctx.store, ctx.verifier, cid, up.getvalue(), up.name,
+                                                    actor=ctx.user["name"])
+        except DuplicateClaim as dup:
+            st.warning(f"Bill {dup} has already been claimed on this policy. "
+                       "See My claims for where it stands.")
+            return
     last = st.session_state.get("cs_last")
     if last:
         c = ctx.store.claim(last)
+        r = result_from_json(json.loads(c["result_json"]))
         st.write("")
-        st.markdown(f"**{c['issuer_name']}** · claim {c['claim_id']} " + _status_chip(c["status"]),
-                    unsafe_allow_html=True)
-        st.info(CUSTOMER_TEXT[c["status"]])
+        st.markdown(f"**{c['issuer_name']}** · claim {c['claim_id']} · you uploaded `{c['file_name']}` "
+                    + _status_chip(c["status"]), unsafe_allow_html=True)
+        # The bill that was uploaded, beside what the check concluded.
+        C.verdict_view(r, c["pdf"], next_step=CUSTOMER_TEXT[c["status"]], show_graph=C.details_on())
 
 
 # ==========================================================================
@@ -268,8 +260,11 @@ def officer_inbox(ctx: Ctx) -> None:
     if not open_claims:
         st.success("Inbox empty.")
         return
+    # Worst first, and newest first within each group: what an officer works through,
+    # and it puts a claim submitted during the demo at the top.
     order = {"On hold": 0, "In review": 1, "Waiting for hospital": 2, "Waiting for customer": 3}
-    open_claims.sort(key=lambda c: (order.get(c["status"], 9), c["submitted_at"]))
+    open_claims.sort(key=lambda c: c["submitted_at"], reverse=True)
+    open_claims.sort(key=lambda c: order.get(c["status"], 9))
     labels = {f"{c['customer_name']} · {c['issuer_name']} · {c['verdict']} · {c['status']} · {c['claim_id']}":
               c["claim_id"] for c in open_claims}
     story = st.session_state.get("story_claim")

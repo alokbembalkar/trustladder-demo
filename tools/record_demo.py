@@ -7,10 +7,11 @@ the real browser surface while doing it (test case TC-30).
 
 The story (signed in as the presenter, switching roles with "View as"):
   0  sign in
-  1  Hospital      issues a bill to Meera: ticket printed, two signed codes published
-  2  Customer      Meera claims that same bill: paid on proof
-  3  Officer       the SAME bill, forged by another claimant: Tampered; rejected
-  4  Officer       a bill made from nothing: Suspicious
+  1  Hospital      issues a bill; the two PDFs are downloaded (genuine + tampered copy)
+  2  Customer      uploads the genuine PDF: paid on proof
+  3  2nd customer  uploads the tampered copy of the SAME bill: Tampered
+  4  Officer       opens it (same bill number) and rejects it
+  5  Officer       a bill made from nothing: Suspicious
   4  Risk head     impact dashboard; simulated month as hospitals join
   5  Registry      the network; a forged line is rejected
   6  Auditor       the trail of everything above; the rule and the AI architecture
@@ -157,56 +158,77 @@ def main() -> None:
             pg.get_by_role("button", name="Next ▸").click()
             settle(pg)
 
-        # 1. Hospital issues a bill (Meera is pre-selected)
+        # 1. The hospital issues a bill and hands over the two files the demo needs
         expect_text(pg, "Issue bill and publish", "step 1: hospital")
         pg.wait_for_timeout(READ)
         pg.get_by_role("button", name="Issue bill and publish").click()
         settle(pg)
         expect_text(pg, "Ticket printed on the bill", "bill issued and published")
+        with pg.expect_download() as d1:
+            pg.get_by_role("button", name="Download the bill (PDF)").click()
+        genuine = Path(BUILD / "demo_files" / d1.value.suggested_filename)
+        genuine.parent.mkdir(parents=True, exist_ok=True)
+        d1.value.save_as(str(genuine))
+        with pg.expect_download() as d2:
+            pg.get_by_role("button", name="Download a tampered copy").click()
+        tampered = genuine.parent / d2.value.suggested_filename
+        d2.value.save_as(str(tampered))
+        print(f"TC-30 pass: downloaded {genuine.name} and {tampered.name}")
         pg.wait_for_timeout(READ)
         still(pg, "hospital_issue")
 
-        # 2. Customer claims it
+        # 2. The customer uploads that bill
         next_step()
-        expect_text(pg, "My documents", "step 2: customer")
-        pg.wait_for_timeout(READ // 2)
+        expect_text(pg, "Your bill (PDF)", "step 2: customer upload screen")
+        pg.locator("input[type='file']").first.set_input_files(str(genuine))
+        settle(pg)
         pg.get_by_role("button", name="Submit claim").click()
         settle(pg)
-        expect_text(pg, "Paid. The hospital confirmed your bill", "new claim paid on proof")
+        expect_verdict(pg, "Authentic", "step 2: the uploaded bill")
+        expect_text(pg, "Paid", "step 2: paid on proof")
         pg.wait_for_timeout(READ)
-        still(pg, "customer_paid")
+        still(pg, "customer_upload")
 
-        # 3. The SAME bill, forged, and submitted by someone else
+        # 3. A second customer uploads the tampered copy of the SAME bill
         next_step()
-        pg.get_by_role("button", name="Simulate: someone submits a forged copy of that bill").click()
+        expect_text(pg, "Second customer", "step 3: a different customer")
+        pg.locator("input[type='file']").first.set_input_files(str(tampered))
         settle(pg)
-        expect_text(pg, "bill SMH/", "step 3: the officer sees the same bill number")
-        expect_verdict(pg, "Tampered", "step 3: forged copy of the same bill")
+        pg.get_by_role("button", name="Submit claim").click()
+        settle(pg)
+        expect_verdict(pg, "Tampered", "step 3: the forged copy of the same bill")
+        pg.wait_for_timeout(READ)
+        still(pg, "customer_tampered")
+
+        # 4. The officer opens it and rejects it
+        next_step()
+        expect_verdict(pg, "Tampered", "step 4: top of the officer's inbox")
+        expect_text(pg, "bill SMH/", "step 4: the same bill number")
         pg.wait_for_timeout(READ)
         still(pg, "officer_claim")
         pg.get_by_role("button", name="Reject as fraud").first.click()
         settle(pg)
 
-        # 4. The perfect-looking fake
+        # 5. A bill made from nothing
         next_step()
         pg.get_by_role("combobox", name="A prepared bill").click()
         pg.get_by_role("option").nth(2).click()
         settle(pg)
         pg.get_by_role("button", name="Check this bill").click()
         settle(pg)
-        expect_verdict(pg, "Suspicious", "step 4: made-from-nothing sample bill")
+        expect_verdict(pg, "Suspicious", "step 5: made-from-nothing bill")
         pg.wait_for_timeout(READ)
         still(pg, "case3_suspicious")
 
-        # 5. Risk head
+        # 6. Risk head
         next_step()
-        expect_text(pg, "honest customers wrongly held", "step 5: risk dashboard")
+        expect_text(pg, "honest customers wrongly held", "step 6: risk dashboard")
         pg.wait_for_timeout(READ)
         still(pg, "risk_dashboard")
 
-        # 6. Registry
+        # 7. Registry
         next_step()
-        expect_text(pg, "patient records held", "step 6: registry network")
+        expect_text(pg, "patient records held", "step 7: registry network")
         pg.wait_for_timeout(READ // 2)
         pg.get_by_text("Check that nobody has tampered with the registry").click()
         pg.wait_for_timeout(600)
@@ -216,10 +238,10 @@ def main() -> None:
         pg.wait_for_timeout(READ)
         still(pg, "registry_network")
 
-        # 7. Auditor
+        # 8. Auditor
         next_step()
         # The table is drawn on a canvas; the summary line under it is plain text.
-        expect_text(pg, "5 rejected", "step 7: officer's rejection in the audit summary (4 seeded + 1)")
+        expect_text(pg, "5 rejected", "step 8: officer's rejection in the audit summary (4 seeded + 1)")
         pg.wait_for_timeout(READ)
         still(pg, "audit_trail")
         menu(pg, "How decisions are made")

@@ -39,15 +39,18 @@ DEMO_PASSWORD = "TrustLadder@2026"
 INSURER = "Sahaya Health Insurance (fictional)"
 REGISTRY_BODY = "Health Document Registry (fictional industry body)"
 
+# Logins are generic on purpose: the screens name a ROLE, never a person, so the
+# demo works with whatever bill is uploaded on the day.
 USERS = [
-    # user_id,   name,                         role,        org
-    ("hospital", "Priya Nair (billing desk)", "hospital", "Sahyog Multispeciality Hospital, Pune"),
-    ("customer", "Meera Kulkarni", "customer", "Policyholder"),
-    ("officer", "Anil Joshi (claims officer)", "officer", INSURER),
-    ("riskhead", "Kavita Rao (Chief Risk Officer)", "riskhead", INSURER),
-    ("registry", "Registry desk", "registry", REGISTRY_BODY),
-    ("auditor", "Audit & compliance", "auditor", "Internal audit / regulator (read-only)"),
-    ("presenter", "Capstone Group 7", "presenter", "Demo presenter: every role"),
+    # user_id,    name (shown on screen),   role,        org,                           customer_id
+    ("hospital", "Billing desk", "hospital", "Sahyog Multispeciality Hospital, Pune", ""),
+    ("customer", "Customer", "customer", "Policyholder · " + INSURER, "CUST-001"),
+    ("customer2", "Second customer", "customer", "Policyholder · " + INSURER, "CUST-002"),
+    ("officer", "Claims officer", "officer", INSURER, ""),
+    ("riskhead", "Risk head", "riskhead", INSURER, ""),
+    ("registry", "Registry operator", "registry", REGISTRY_BODY, ""),
+    ("auditor", "Auditor", "auditor", "Internal audit / regulator (read-only)", ""),
+    ("presenter", "Presenter", "presenter", "Demo presenter: every role", ""),
 ]
 
 CUSTOMERS = [
@@ -120,9 +123,8 @@ def build_world(data_dir: Path = DATA_DIR) -> Store:
     registry = RegistryStore(data_dir)
     verifier = Verifier(registry)
     store = Store(db_path(data_dir))
-    for uid, name, role, org in USERS:
-        store.add_user(uid, name, role, org, DEMO_PASSWORD,
-                       customer_id="CUST-001" if role == "customer" else "",
+    for uid, name, role, org, customer_id in USERS:
+        store.add_user(uid, name, role, org, DEMO_PASSWORD, customer_id=customer_id,
                        issuer_id="IN-HOSP-SAHYOG-PUN-0101" if role == "hospital" else "")
     for cid, name, city in CUSTOMERS:
         store.add_customer(cid, name, city)

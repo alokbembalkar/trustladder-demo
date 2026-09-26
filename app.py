@@ -96,79 +96,63 @@ if not user:
 # The presenter's guided story: one step per screen, with what to click and say
 # --------------------------------------------------------------------------
 
-def _forge_the_same_bill() -> None:
-    """Demo action for step 3: someone copies the bill just issued and raises its total.
-
-    Keeping the story on ONE bill is the whole point: the officer then sees the same
-    hospital and the same bill number that the hospital issued two steps earlier.
-    """
-    from trustladder.service import simulate_forged_claim
-    bill_no = st.session_state.get("story_bill") or "SMH/2026/004812"
-    claimant = "CUST-004" if st.session_state.get("story_customer") != "CUST-004" else "CUST-005"
-    st.session_state.story_claim = simulate_forged_claim(store, _verifier(), bill_no, claimant)
-    st.session_state.pop("inbox_pick", None)
-
-
 STEPS = [
-    # role, page, short name, what to click, what to say, optional (button label, action)
+    # role, page, short name, what to click, what to say
     ("hospital", "Issue a bill", "Hospital issues",
-     "Meera Kulkarni is already chosen as the patient. Press **Issue bill and publish**.",
-     "The hospital prints a random ticket on the bill and tells the registry. No patient data leaves the hospital.",
-     None),
-    ("customer", "Submit a claim", "Meera claims",
-     "That same bill is already selected (“just issued to you”). Press **Submit claim**.",
-     "Paid at once: the hospital itself confirmed the bill, so no officer was needed.",
-     None),
-    ("officer", "Claims inbox", "The same bill, forged",
-     "Press the button below to copy that same bill and raise its total, as a forger would. "
-     "Then look at what the officer sees.",
-     "Another claimant has submitted a copy of that same bill with a bigger total. Same hospital, same bill "
-     "number; the hospital's own record disagrees, so it is held.",
-     ("Simulate: someone submits a forged copy of that bill", _forge_the_same_bill)),
+     "Press **Issue bill and publish**, then download **both** files: the bill, and the tampered copy "
+     "(the tampered one is a demo device, so we can show a forgery later).",
+     "The hospital prints a random ticket on the bill and sends the registry two scrambled codes. "
+     "No patient data leaves the hospital."),
+    ("customer", "Submit a claim", "Customer uploads",
+     "Upload the **bill** you just downloaded, then press **Submit claim**.",
+     "The customer uploads their bill. The hospital's own record confirms it, so it is paid at once, "
+     "with no officer involved."),
+    ("customer2", "Submit a claim", "A forged copy",
+     "Now, as a different customer, upload the **tampered copy** and press **Submit claim**.",
+     "Someone else submits the same bill with a bigger total. Same hospital, same bill number, and the "
+     "hospital's record disagrees, so it is held for a person.",),
+    ("officer", "Claims inbox", "Officer decides",
+     "Open the top claim (the forged copy) and press **Reject as fraud**.",
+     "Only claims that could not be proven reach a person, and they arrive with the reason and the evidence."),
     ("officer", "Check any bill", "A fake from nothing",
      "Choose the prepared bill **3. Made from nothing** and press **Check this bill**.",
-     "It looks perfect and passes every visual check, yet the hospital never issued it.",
-     None),
+     "It looks perfect and passes every visual check, yet the hospital never issued it."),
     ("riskhead", "Dashboard", "Risk head",
      "Point at the three numbers.",
-     "Fraud stopped, and honest customers wrongly held: both are counted. Only proven bills are paid automatically.",
-     None),
+     "Fraud stopped, and honest customers wrongly held: both are counted. Only proven bills are paid "
+     "automatically."),
     ("registry", "Network", "Registry",
      "Point at 'Patient data held: None'.",
-     "The registry holds scrambled codes only. A complete theft would reveal nothing.",
-     None),
+     "The registry holds scrambled codes only. A complete theft would reveal nothing."),
     ("auditor", "Audit trail", "Auditor",
      "Point at the latest rows: the bill, both claims and your decision.",
-     "Every machine verdict and every human decision is recorded, for the regulator and for disputes.",
-     None),
+     "Every machine verdict and every human decision is recorded, for the regulator and for disputes."),
 ]
 
 
 def _go(i: int) -> None:
     """Move the guided story to step i and open that step's screen."""
     st.session_state.step = i
-    role, page = STEPS[i][0], STEPS[i][1]
-    st.session_state[f"nav_{role}"] = page
+    login, page = STEPS[i][0], STEPS[i][1]
+    st.session_state[f"nav_{login}"] = page
+    st.session_state.pop("cs_last", None)          # each customer sees only their own submission
 
 
 def guide_bar() -> None:
     i = st.session_state.setdefault("step", 0)
     pills = "".join(
         f'<span class="{"on" if j == i else "done" if j < i else ""}">{j + 1} {name}</span>'
-        for j, (_, _, name, *_rest) in enumerate(STEPS))
+        for j, (_, _, name, _do, _say) in enumerate(STEPS))
     left, right = st.columns([6, 1.3])
     left.markdown(f'<div class="tl-steps">{pills}</div>', unsafe_allow_html=True)
     b1, b2 = right.columns(2)
     b1.button("◂ Back", key="step_back", on_click=_go, args=(max(0, i - 1),), disabled=i == 0)
     b2.button("Next ▸", key="step_next", type="primary", on_click=_go, args=(min(len(STEPS) - 1, i + 1),),
               disabled=i == len(STEPS) - 1)
-    _, _, _, do, say, action = STEPS[i]
+    _, _, _, do, say = STEPS[i]
     do = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", do)          # **bold** -> <b>bold</b> inside HTML
     st.markdown(f'<div class="tl-guide"><div class="do"><b>Do:</b> {do}</div>'
                 f'<div class="say">Say: “{say}”</div></div>', unsafe_allow_html=True)
-    if action:
-        st.button(action[0], key=f"step_action_{i}", on_click=action[1])
-        st.write("")
 
 
 # --------------------------------------------------------------------------
@@ -178,8 +162,9 @@ def guide_bar() -> None:
 is_presenter = user["role"] == "presenter"
 if is_presenter and "step" not in st.session_state:
     _go(0)
-acting = STEPS[st.session_state["step"]][0] if is_presenter else user["role"]
-acting_user = store.user(acting) if is_presenter else user      # act exactly as that role's demo user
+acting_login = STEPS[st.session_state["step"]][0] if is_presenter else user["user_id"]
+acting_user = store.user(acting_login) if is_presenter else user   # act as that demo login
+acting = acting_user["role"]
 
 with st.sidebar:
     st.markdown(logo_html(34), unsafe_allow_html=True)
@@ -189,7 +174,8 @@ with st.sidebar:
     st.write("")
     menu = MENUS[acting]
     if len(menu) > 1:
-        page = st.radio("Menu", [label for label, _ in menu], key=f"nav_{acting}", label_visibility="collapsed")
+        page = st.radio("Menu", [label for label, _ in menu], key=f"nav_{acting_login}",
+                        label_visibility="collapsed")
     else:
         page = menu[0][0]
     st.divider()

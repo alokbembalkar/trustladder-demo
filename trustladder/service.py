@@ -17,12 +17,23 @@ from .registry import Publisher, RegistryStore, Verifier
 from .store import Store
 
 
+class DuplicateClaim(Exception):
+    """The same bill has already been claimed by this customer (the insurer's own check)."""
+
+
 def submit_claim(store: Store, verifier: Verifier, customer_id: str, pdf: bytes, file_name: str,
                  bill_no: str = "", truth: str = "", submitted_at: str | None = None,
                  actor: str = "") -> str:
-    """A customer submits a bill: TrustLadder checks it on attach, the policy routes it."""
+    """A customer submits a bill: TrustLadder checks it on attach, the policy routes it.
+
+    The bill number is taken from the uploaded document itself when it can be read,
+    so an uploaded claim is linked to the same bill as the hospital's record.
+    """
     customer = store.customer(customer_id)
     result = run_ladder(pdf, verifier, file_name)
+    bill_no = bill_no or (result.fields.bill_no if result.fields else "")
+    if bill_no and any(c["bill_no"] == bill_no for c in store.claims(customer_id=customer_id)):
+        raise DuplicateClaim(bill_no)
     graph = build_evidence(result)
     return store.record_claim(customer_id, customer["name"], file_name, pdf, result,
                               graph.independent_against, bill_no=bill_no, truth=truth,
@@ -55,23 +66,6 @@ def issue_bill(store: Store, registry: RegistryStore, verifier: Verifier, bill: 
     store.log(actor, "hospital", "Bill issued and published" if joined else "Bill issued",
               "", f"{bill.bill_no} for {bill.patient}", issued_at)
     return pdf
-
-
-def simulate_forged_claim(store: Store, verifier: Verifier, bill_no: str, claimant_id: str,
-                          raise_by_paise: int = 5000000) -> str:
-    """Demo action: someone takes a real bill, raises its total, and claims it.
-
-    This is the only place the demo pretends to be a forger, and it is labelled as
-    such on screen. It keeps the story on ONE bill: the officer then sees the same
-    hospital and the same bill number that the hospital issued a moment ago.
-    """
-    from .bills import render_altered
-    from .reader import read_bill
-    bill = read_bill(store.bill_pdf(bill_no))[1]
-    forged = render_altered(bill, bill.total_paise + raise_by_paise, joined=bool(bill.ticket))
-    # The forged copy carries the same bill number, so the claim links to the same bill.
-    return submit_claim(store, verifier, claimant_id, forged, f"{bill.bill_no.replace('/', '_')}_copy.pdf",
-                        bill_no=bill.bill_no, truth="fraud", actor="Demo: forged copy")
 
 
 def enrol_hospital(store: Store, registry: RegistryStore, verifier: Verifier, issuer_id: str,
