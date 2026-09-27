@@ -608,3 +608,41 @@ def test_tc65_the_toolkit_edits_the_bill_that_was_just_issued():
     assert picked, "the toolkit must offer a bill to edit"
     assert bill_no in picked[0], \
         f"toolkit is editing {picked[0]!r}, but the story just issued {bill_no}"
+
+
+def test_tc66_the_audit_trail_names_actors_by_one_convention():
+    """TC-66. Steps: read the 'Who' column of the seeded audit trail; then issue a bill
+    and submit a claim live and read the new rows.
+    Expected: ONE convention throughout. A claim is attributed to the party who made it,
+    by name. Staff actions are attributed to the desk or role that did them, and no
+    person is invented for a login that is a role. Live rows and seeded rows read the
+    same, so nobody can tell which came from the sample data."""
+    store = _store()
+    claims = {c["claim_id"]: c["customer_name"] for c in store.claims()}
+    audit = store.audit()
+
+    for e in audit:
+        if e["event"] == "Claim submitted" and e["claim_id"] in claims:
+            assert e["actor"] == claims[e["claim_id"]], \
+                f"claim {e['claim_id']} logged against {e['actor']!r}, not the claimant"
+    decisions = [e for e in audit if e["role"] == "officer"]
+    assert decisions, "the sample month must contain officer decisions"
+    assert {e["actor"] for e in decisions} == {"Claims officer"}, \
+        f"officer rows name more than one actor: {sorted({e['actor'] for e in decisions})}"
+    assert all(e["actor"].endswith(" billing") for e in audit if e["role"] == "hospital"), \
+        "a bill must be logged against the issuing hospital's billing desk"
+
+    # now the live path, through the screens
+    at = _login("hospital")
+    at.button(key="h_issue").click().run()
+    bill_no = re.search(r"Issued (\S+)", next(s.value for s in at.success)).group(1)
+    store = _store()
+    cid = store.user("customer")["customer_id"]
+    claim_id = submit_claim(store, Verifier(RegistryStore(DATA_DIR)), cid,
+                            store.bill_pdf(bill_no), "bill.pdf")
+    fresh = _store().audit()
+    issued = next(e for e in fresh if e["role"] == "hospital" and bill_no in e["detail"])
+    claimed = next(e for e in fresh if e["claim_id"] == claim_id and e["event"] == "Claim submitted")
+    assert issued["actor"].endswith(" billing"), issued["actor"]
+    assert claimed["actor"] == store.customer(cid)["name"], \
+        f"the live claim is logged against {claimed['actor']!r}, not the customer"

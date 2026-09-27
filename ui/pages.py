@@ -96,7 +96,8 @@ def hospital_issue(ctx: Ctx) -> None:
         serial = 7000 + len(ctx.store.bills_of_issuer(issuer_id))
         bill = BillFields(issuer_id, name, f"{bill_prefix}/2026/{serial:06d}", bill_date.isoformat(),
                           cust["name"], items, sum(i.amount_paise for i in items))
-        pdf = issue_bill(ctx.store, ctx.registry, ctx.verifier, bill, cust["customer_id"], ctx.user["name"])
+        pdf = issue_bill(ctx.store, ctx.registry, ctx.verifier, bill, cust["customer_id"],
+                         f"{name.split()[0]} billing")
         st.session_state.h_issued = (bill, pdf)
         st.session_state.story_bill = bill.bill_no        # the demo story follows this one bill
         st.session_state.story_customer = cust["customer_id"]
@@ -172,7 +173,8 @@ def customer_claims(ctx: Ctx) -> None:
                     else:
                         st.warning("Choose a document or upload a PDF first.")
                         return
-                    resubmit_claim(ctx.store, ctx.verifier, c["claim_id"], pdf, name, ctx.user["name"])
+                    resubmit_claim(ctx.store, ctx.verifier, c["claim_id"], pdf, name,
+                                   c["customer_name"])
                     st.rerun()
 
 
@@ -192,8 +194,10 @@ def customer_submit(ctx: Ctx) -> None:
     if submitted:
         # A bill that came in before is not refused: it is checked like any other,
         # and "already claimed on this policy" becomes one more piece of evidence.
-        st.session_state.cs_last = submit_claim(ctx.store, ctx.verifier, cid, up.getvalue(), up.name,
-                                                actor=ctx.user["name"])
+        # The audit trail names the PARTY who claimed, not the login they used:
+        # "Customer" is a role label for the screen, and an auditor needs the person.
+        # submit_claim falls back to the customer's own name when no actor is given.
+        st.session_state.cs_last = submit_claim(ctx.store, ctx.verifier, cid, up.getvalue(), up.name)
     last = st.session_state.get("cs_last")
     if last:
         c = ctx.store.claim(last)

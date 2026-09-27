@@ -234,7 +234,10 @@ def build_world(data_dir: Path = DATA_DIR) -> Store:
         claim_id = submit_claim(store, verifier, cust[0], pdf, name, bill.bill_no if joined else "",
                                 truth=truth, submitted_at=submitted)
         if decision:
-            store.decide(claim_id, decision, "Anil Joshi (claims officer)",
+            # The officer login is a ROLE, not a person, so the seeded history must not
+            # invent one: the audit trail would then name a person on live rows and a
+            # different person on seeded ones for the same job.
+            store.decide(claim_id, decision, "Claims officer",
                          when=f"2026-03-{min(day + 2, 21):02d} 15:{(i * 11) % 60:02d}")
     return store
 
