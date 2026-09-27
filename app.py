@@ -107,9 +107,9 @@ STEPS = [
      "The customer uploads their bill. The hospital's own record confirms it, so it is paid at once, "
      "with no officer involved."),
     ("customer", "Submit a claim", "The same bill, edited",
-     "In the sidebar, open **Demo toolkit**, upload the bill and download the **edited copy** "
-     "(that is what a forger does on their own computer). Then upload that edited copy on this same "
-     "screen and press **Submit claim**.",
+     "In the sidebar, open **Demo toolkit**, check it is showing the bill you just issued, and press "
+     "**Download the edited copy** (that is what a forger does on their own computer). Then upload "
+     "that copy in the box on this screen and press **Submit claim**.",
      "The same customer now sends the same bill with a bigger total. There is one place to upload a "
      "bill and the check is the same either way: the hospital's record disagrees, and the insurer can "
      "see it has had this bill before, so it is held for a person."),
@@ -143,27 +143,44 @@ def forger_toolkit() -> None:
     computer. It is NOT part of the product, and no role screen can reach it.
 
     A hospital only ever issues a genuine bill. Someone who wants to defraud the
-    insurer downloads that bill and edits it themselves. This little tool does
-    exactly that, so the demo can show a forgery of the very bill just issued.
+    insurer takes the bill they were given and edits it themselves.
+
+    It deliberately has NO upload box. The forger already holds the bill, and the
+    demo already holds it too, so asking for it to be uploaded here put a SECOND
+    file-upload control on the customer's screen and made it look as though the
+    product wanted the same bill twice. There is one upload box in this demo and it
+    is the claim form.
     """
     from trustladder.bills import render_altered
     from trustladder.reader import read_bill
     with st.expander("Demo toolkit: the forger's PDF editor"):
         st.caption("Not part of TrustLadder. It stands in for the editing someone would do on their own "
                    "computer after downloading a genuine bill.")
-        up = st.file_uploader("The genuine bill (PDF)", type=["pdf"], key="tool_pdf")
+        bills = store.recent_bills()
+        if not bills:
+            st.caption("No bill has been issued yet. Run step 1 first.")
+            return
+        labels = {f"{b['bill_no']}  ·  {b['issuer_name']}": b["bill_no"] for b in bills}
+        # The sidebar renders on EVERY step, so this box is first drawn at step 1,
+        # before the hospital has issued anything. With a fixed key Streamlit would
+        # keep that first choice and the forger would go on editing a seeded bill
+        # from another hospital. Keying it on the newest bill resets the choice the
+        # moment a bill is issued, so it always starts from the bill just handed over.
+        newest = bills[0]["bill_no"]
+        pick = st.selectbox("The bill they were given", list(labels), index=0,
+                            key=f"tool_bill_{newest}")
         extra = st.number_input("Raise the total by (Rs)", min_value=1000, max_value=500000, value=50000,
                                 step=5000, key="tool_extra")
-        if up is not None:
-            status, fields, _ = read_bill(up.getvalue())
-            if fields is None:
-                st.warning("That PDF could not be read, so it cannot be edited here.")
-            else:
-                edited = render_altered(fields, fields.total_paise + int(extra) * 100,
-                                        joined=bool(fields.ticket))
-                st.download_button("Download the edited copy", edited,
-                                   up.name.replace(".pdf", "") + "_edited.pdf", mime="application/pdf",
-                                   key="tool_dl", type="primary")
+        bill_no = labels[pick]
+        status, fields, _ = read_bill(store.bill_pdf(bill_no))
+        if fields is None:
+            st.warning("That bill could not be read, so it cannot be edited here.")
+            return
+        edited = render_altered(fields, fields.total_paise + int(extra) * 100,
+                                joined=bool(fields.ticket))
+        st.download_button("Download the edited copy", edited,
+                           bill_no.replace("/", "_") + "_edited.pdf", mime="application/pdf",
+                           key="tool_dl", type="primary")
 
 
 def guide_bar() -> None:

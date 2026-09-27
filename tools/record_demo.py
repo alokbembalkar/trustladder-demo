@@ -10,7 +10,8 @@ The story (signed in as the presenter, who steps through the seven screens):
   1  Hospital      issues a bill; the genuine PDF is downloaded
   2  Customer      uploads that PDF on the one upload screen: paid on proof
   3  Customer      the SAME customer, the SAME screen: the bill is edited in the demo
-                   toolkit (the forger's editor) and the edited copy is uploaded: Tampered
+                   toolkit (the forger's editor, which needs no upload of its own) and
+                   the edited copy is uploaded: Tampered
   4  Officer       opens it (same bill number) and rejects it
   5  Risk head     impact dashboard; simulated month as hospitals join
   6  Registry      the network; a forged line is rejected
@@ -197,9 +198,13 @@ def main() -> None:
         if pg.get_by_text("Second customer").count():
             raise SystemExit("TC-30 FAIL step 3: the story must stay with one customer account")
         pg.get_by_text("Demo toolkit: the forger's PDF editor").click()
-        pg.wait_for_timeout(600)
-        pg.locator("[data-testid='stSidebar'] input[type='file']").first.set_input_files(str(genuine))
-        settle(pg)
+        pg.wait_for_timeout(900)
+        # The toolkit starts from the bill it already holds, so the presenter is never
+        # asked for the same file twice. Exactly one upload box may be on screen here.
+        n_up = pg.locator("input[type='file']").count()
+        if n_up != 1:
+            raise SystemExit(f"TC-30 FAIL step 3: expected one upload box on screen, found {n_up}")
+        print("TC-30 pass: step 3: exactly one upload box on screen (the claim form)")
         with pg.expect_download() as d2:
             pg.get_by_role("button", name="Download the edited copy").click()
         tampered = genuine.parent / d2.value.suggested_filename

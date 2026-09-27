@@ -173,6 +173,17 @@ class Store:
                 "SELECT bill_no, issuer_name, bill_date, total_paise, issued_at FROM bills "
                 "WHERE customer_id = ? ORDER BY issued_at DESC", (customer_id,))]
 
+    def recent_bills(self, limit: int = 10) -> list[dict]:
+        """The most recently issued bills, newest first.
+
+        Used by the presenter's demo toolkit so it can start from the bill the
+        hospital just issued instead of asking for it to be uploaded again.
+        """
+        with self._conn() as c:
+            return [dict(r) for r in c.execute(
+                "SELECT bill_no, issuer_name, patient, total_paise, issued_at FROM bills "
+                "ORDER BY issued_at DESC, bill_no DESC LIMIT ?", (limit,))]
+
     def bill_pdf(self, bill_no: str) -> bytes:
         with self._conn() as c:
             return c.execute("SELECT pdf FROM bills WHERE bill_no = ?", (bill_no,)).fetchone()["pdf"]

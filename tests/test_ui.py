@@ -532,6 +532,8 @@ def test_tc60_the_forgery_is_made_by_the_forger_not_the_hospital():
     at = _login("presenter")
     assert any("toolkit" in (e.label or "").lower() for e in at.get("expander")), \
         "the forger's editor belongs to the presenter, not to any role"
+    assert not at.get("file_uploader"), \
+        "the toolkit must not ask for an upload: one upload box in the demo, and it is the claim form"
 
     # what the toolkit produces, judged by the real ladder
     store, verifier = _store(), Verifier(RegistryStore(DATA_DIR))
@@ -541,3 +543,68 @@ def test_tc60_the_forgery_is_made_by_the_forger_not_the_hospital():
     edited = render_altered(fields, fields.total_paise + 5000000, joined=bool(fields.ticket))
     claim = store.claim(submit_claim(store, verifier, "CUST-002", edited, "bill_edited.pdf"))
     assert claim["verdict"] == "Tampered" and claim["bill_no"] == bill_no
+
+
+def test_tc63_only_one_upload_box_on_the_screen_that_takes_the_forged_copy():
+    """TC-63. Steps: sign in as presenter and walk to step 3, the step where the
+    forged copy is submitted.
+    Expected: exactly ONE file-upload box is on screen, the claim form's. The demo
+    toolkit in the sidebar offers the bill it already holds, so the presenter is
+    never asked to upload the same bill in two places."""
+    at = _login("presenter")
+    for _ in range(2):                       # step 1 -> 2 -> 3
+        at.button(key="step_next").click().run()
+    assert at.session_state["step"] == 2, "step 3 of the guided story"
+    assert not at.exception
+    uploaders = at.get("file_uploader")
+    assert len(uploaders) == 1, f"expected one upload box on step 3, found {len(uploaders)}"
+    assert uploaders[0].key == "cs_upload", "the one upload box is the customer's claim form"
+    assert any("toolkit" in (e.label or "").lower() for e in at.get("expander")), \
+        "the toolkit is still there; it just does not ask for a file"
+
+
+def test_tc64_every_bill_in_the_demo_is_for_one_patient():
+    """TC-64. Steps: read the patient off each of the six prepared bills; then issue a
+    bill on the hospital screen without changing anything and read its patient too.
+    Expected: one patient throughout. The bill the live story issues is in the name of
+    the customer who then claims it, and that is the same person the prepared bills
+    name, so no screen ever shows one person claiming another person's bill."""
+    from trustladder.reader import read_bill
+    names = set()
+    for f in sorted((DATA_DIR / "showcase").glob("*.pdf")):
+        fields = read_bill(f.read_bytes())[1]
+        if fields:                                   # bill 5 is a blurred photo, by design
+            names.add(fields.patient)
+    assert len(names) == 1, f"the prepared bills name more than one patient: {names}"
+    prepared = names.pop()
+
+    at = _login("hospital")
+    at.button(key="h_issue").click().run()
+    assert not at.exception
+    bill_no = re.search(r"Issued (\S+)", next(s.value for s in at.success)).group(1)
+    store = _store()
+    issued = read_bill(store.bill_pdf(bill_no))[1]
+    assert issued.patient == prepared, \
+        f"the live story issues a bill for {issued.patient!r} but the samples are {prepared!r}"
+
+    claimant = store.customer(store.user("customer")["customer_id"])["name"]
+    assert claimant == prepared, \
+        f"{claimant!r} would be claiming a bill made out to {prepared!r}"
+
+
+def test_tc65_the_toolkit_edits_the_bill_that_was_just_issued():
+    """TC-65. Steps: sign in as presenter (the sidebar toolkit is drawn straight away,
+    before any bill exists); press Next to step 1 and issue a bill; walk on to step 3.
+    Expected: the toolkit is offering THAT bill, not a seeded one from another
+    hospital. This is the failure the browser walkthrough caught: the box was drawn
+    once at step 1 and kept its first choice for the rest of the story."""
+    at = _login("presenter")
+    at.button(key="h_issue").click().run()
+    bill_no = re.search(r"Issued (\S+)", next(s.value for s in at.success)).group(1)
+    for _ in range(2):                                  # step 1 -> 2 -> 3
+        at.button(key="step_next").click().run()
+    assert at.session_state["step"] == 2
+    picked = [b.value for b in at.selectbox if str(b.key or "").startswith("tool_bill")]
+    assert picked, "the toolkit must offer a bill to edit"
+    assert bill_no in picked[0], \
+        f"toolkit is editing {picked[0]!r}, but the story just issued {bill_no}"

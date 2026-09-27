@@ -72,9 +72,16 @@ def hospital_issue(ctx: Ctx) -> None:
     page_title("Issue a bill", "Fill in the bill as usual. TrustLadder adds a random ticket and tells the "
                                "registry, without sharing any patient data.")
     customers = ctx.store.customers()
+    # The list is alphabetical, but the bill issued here is the one the demo's own
+    # customer then claims, and the six prepared sample bills are for that same
+    # person. Defaulting to anyone else produced a bill in one patient's name being
+    # claimed by another, which is the first thing a reviewer asks about.
+    demo_cid = ctx.store.user("customer")["customer_id"]
+    default = next((i for i, c in enumerate(customers) if c["customer_id"] == demo_cid), 0)
     c1, c2 = st.columns([1, 1], gap="large")
     with c1:
-        cust = st.selectbox("Patient", customers, format_func=lambda c: f"{c['name']} ({c['city']})",
+        cust = st.selectbox("Patient", customers, index=default,
+                            format_func=lambda c: f"{c['name']} ({c['city']})",
                             key="h_patient")
         bill_date = st.date_input("Bill date", _dt.date(2026, 3, 21), key="h_date")
     with c2:
