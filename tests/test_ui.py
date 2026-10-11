@@ -22,7 +22,7 @@ from trustladder.seed import DEMO_PASSWORD, db_path, restore_snapshot
 from trustladder.bills import render_altered
 from trustladder.reader import read_bill
 from trustladder.service import CLAIM_HISTORY, submit_claim
-from trustladder.store import Store, result_from_json
+from trustladder.store import OPEN_STATUSES, Store, result_from_json
 
 APP = str(Path(__file__).resolve().parent.parent / "app.py")
 SPEC = json.loads((Path(APP).parent / "trustladder" / "architecture.json").read_text())
@@ -61,9 +61,26 @@ def _go(at: AppTest, role: str, page: str) -> AppTest:
     return at
 
 
-def _inbox_top(at: AppTest) -> str:
-    """The claim id the officer's inbox opens first (worst first, then newest)."""
-    return at.selectbox(key="inbox_pick").value.split(" · ")[-1]
+def _queue() -> list[dict]:
+    """The officer's queue, in the order the inbox lists it: worst first, newest first."""
+    rows = _store().claims(statuses=OPEN_STATUSES)
+    order = {"On hold": 0, "In review": 1, "Waiting for hospital": 2, "Waiting for customer": 3}
+    rows.sort(key=lambda c: c["submitted_at"], reverse=True)
+    rows.sort(key=lambda c: order.get(c["status"], 9))
+    return rows
+
+
+def _open_claim(at: AppTest, claim_id: str) -> AppTest:
+    """The inbox is a work queue: press Open on that claim's row."""
+    at.button(key=f"open_{claim_id}").click().run()
+    return at
+
+
+def _open_top(at: AppTest) -> str:
+    """Open the claim at the top of the officer's queue and return its id."""
+    cid = _queue()[0]["claim_id"]
+    _open_claim(at, cid)
+    return cid
 
 
 def _texts(at: AppTest) -> str:
@@ -198,9 +215,8 @@ def test_tc46_officer_decision_moves_the_numbers():
     by one; the audit trail records the decision next to the machine verdict."""
     before = _store().measures()["rejected"]
     at = _login("officer")
-    first = at.selectbox(key="inbox_pick").value
-    cid = first.split(" · ")[-1]
-    assert "On hold" in first
+    assert _queue()[0]["status"] == "On hold", "the worst claim is at the top of the queue"
+    cid = _open_top(at)
     at.button(key=f"dec_reject_{cid}").click().run()
     assert _store().claim(cid)["status"] == "Rejected"
     assert _store().measures()["rejected"] == before + 1
@@ -321,7 +337,8 @@ def test_tc53_verdict_view_has_ai_inside_and_evidence_graph():
     with its 'AI inside' line; '4 independent lines against'; an evidence graph
     naming R2 and Tampered; the reason labelled as a template (GraphRAG = target)."""
     at = _login("officer")
-    assert _store().claim(_inbox_top(at))["verdict"] == "Tampered"
+    cid = _open_top(at)
+    assert _store().claim(cid)["verdict"] == "Tampered"
     at.toggle(key="details").set_value(True).run()
     titles = [re.search(r'tl-stage-title">(.+?)<', m.value).group(1)
               for m in at.markdown if 'tl-stage-title">' in m.value]
@@ -414,7 +431,8 @@ def test_tc61_a_repeat_of_an_edited_bill_adds_an_independent_line():
 
     # And the officer must be able to SEE it, not just have it stored.
     at = _login("officer")
-    assert _inbox_top(at) == edited["claim_id"], "the newest tampered claim is the one opened"
+    assert _queue()[0]["claim_id"] == edited["claim_id"], "the newest tampered claim tops the queue"
+    _open_claim(at, edited["claim_id"])
     at.toggle(key="details").set_value(True).run()
     texts = _texts(at)
     assert CLAIM_HISTORY in texts, "the claim-history family must be named on screen"
@@ -428,6 +446,7 @@ def test_tc55_simple_by_default():
     Expected: the verdict, a one-sentence reason and the four-step strip are shown;
     no rule numbers, evidence graph or 'AI inside' lines appear until the switch is on."""
     at = _login("officer")
+    _open_top(at)
     texts = _texts(at)
     assert _verdict(at) == "Tampered"
     assert 'class="tl-strip"' in texts and "Hospital's record differs" in texts
@@ -479,8 +498,9 @@ def test_tc57_the_demo_story_follows_one_bill():
     assert forged["customer_id"] == paid["customer_id"], \
         "one customer, one upload screen: the same person sends the genuine bill and the edited one"
     at = _login("officer")
-    # worst first, newest first: the claim just submitted is the one the officer opens
-    assert forged["claim_id"] in at.selectbox(key="inbox_pick").value
+    # worst first, newest first: the claim just submitted is at the top of the queue
+    assert _queue()[0]["claim_id"] == forged["claim_id"]
+    _open_claim(at, forged["claim_id"])
     assert f"bill {bill_no}" in _texts(at)
 
 
@@ -704,9 +724,35 @@ def test_tc67_the_customer_is_never_shown_the_verdict():
         "the customer should be told where the claim stands, in their own words"
 
     # the officer, who must act on it, still sees everything
-    at = _login("officer")
-    at.selectbox(key="inbox_pick").set_value(
-        next(o for o in at.selectbox(key="inbox_pick").options if edited in o)).run()
+    at = _open_claim(_login("officer"), edited)
     otexts = _texts(at)
     assert 'data-testid="tl-verdict">Tampered<' in otexts, "the officer must see the verdict"
     assert "What was found" in otexts, "the officer must see what was found"
+
+
+def test_tc68_the_officer_lands_on_a_queue_not_on_a_verdict():
+    """TC-68. Steps: sign in as the officer; read the landing screen; open the top claim;
+    press Back to the queue.
+    Expected: the landing screen is a work queue listing every pending claim with an Open
+    button, and NO verdict is on screen until one is chosen. Opening a claim shows the
+    verdict and what was found. Back returns to the queue."""
+    queue = _queue()
+    assert queue, "the sample world must leave claims waiting"
+    at = _login("officer")
+
+    texts = _texts(at)
+    assert 'data-testid="tl-verdict"' not in texts, \
+        "the officer must choose a claim before any verdict is shown"
+    assert "Waiting for a decision" in texts
+    for c in queue:                                   # every pending claim is listed and openable
+        assert c["claim_id"] in texts, c["claim_id"]
+        assert at.button(key=f"open_{c['claim_id']}"), c["claim_id"]
+
+    cid = _open_top(at)
+    assert _verdict(at) == _store().claim(cid)["verdict"], "the verdict appears once a claim is chosen"
+    assert "What was found" in _texts(at)
+
+    at.button(key="inbox_back").click().run()
+    back = _texts(at)
+    assert 'data-testid="tl-verdict"' not in back and "Waiting for a decision" in back, \
+        "Back must return to the queue"

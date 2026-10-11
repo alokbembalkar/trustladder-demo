@@ -13,7 +13,8 @@ The story (signed in as the presenter, who steps through the six screens):
                    then, on that SAME screen, the bill is edited in the demo toolkit
                    (the forger's editor, which needs no upload of its own) and the
                    edited copy is uploaded: Tampered
-  3  Officer       opens it (same bill number), sees WHAT was found, and rejects it
+  3  Officer       a QUEUE of pending claims; opens the top one (same bill number),
+                   sees WHAT was found, and rejects it
   4  Risk head     impact dashboard; a separate what-if as hospitals join
   5  Registry      the network; a forged line is rejected
   6  Auditor       the trail of everything above; the rule and the AI architecture
@@ -199,6 +200,21 @@ def main() -> None:
         # scope to the main area: the presenter's sidebar toolkit also has an upload box
         pg.locator("[data-testid='stMain'] input[type='file']").first.set_input_files(str(genuine))
         settle(pg)
+        # The bill must be on screen, and ABOVE the Submit button, before anything is sent.
+        if "Check this is the right bill" not in pg.inner_text("body"):
+            raise SystemExit("TC-30 FAILED: the customer cannot see the bill before submitting")
+        order = pg.evaluate("""() => {
+            const main = document.querySelector("[data-testid='stMain']");
+            const img = main.querySelector("img");
+            const btns = [...main.querySelectorAll("button")];
+            const submit = btns.find(b => b.innerText.trim().startsWith("Submit claim"));
+            if (!img || !submit) return "missing";
+            return (img.compareDocumentPosition(submit) & Node.DOCUMENT_POSITION_FOLLOWING)
+                ? "preview first" : "button first";
+        }""")
+        if order != "preview first":
+            raise SystemExit(f"TC-30 FAILED: the Submit button comes before the bill ({order})")
+        print("TC-30 pass: step 2: the customer sees the bill above the Submit button")
         pg.get_by_role("button", name="Submit claim").click()
         settle(pg)
         expect_claim_status(pg, "Paid", "step 2: the customer's own bill, paid on proof")
@@ -231,9 +247,15 @@ def main() -> None:
         pg.wait_for_timeout(READ)
         still(pg, "customer_tampered")
 
-        # 3. The officer opens it and rejects it
+        # 3. The officer works a queue: nothing is open until a claim is chosen.
         next_step()
-        expect_verdict(pg, "Tampered", "step 3: top of the officer's inbox")
+        expect_text(pg, "Waiting for a decision", "step 3: the inbox is a queue of pending claims")
+        if pg.locator("[data-testid='tl-verdict']:visible").count():
+            raise SystemExit("TC-30 FAILED: step 3: a verdict is shown before a claim is chosen")
+        print("TC-30 pass: step 3: no verdict until the officer picks a claim")
+        pg.get_by_role("button", name="Open").first.click()
+        settle(pg)
+        expect_verdict(pg, "Tampered", "step 3: the claim the officer opened")
         expect_text(pg, "bill SMH/", "step 3: the same bill number")
         expect_text(pg, "What was found", "step 3: the officer can see WHY, without any switch")
         pg.wait_for_timeout(READ)

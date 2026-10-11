@@ -184,13 +184,17 @@ def customer_submit(ctx: Ctx) -> None:
     page_title("Submit a claim", "Upload the bill your hospital gave you. It is checked the moment you "
                                  "submit, and you are told straight away where your claim stands.")
     up = st.file_uploader("Your bill (PDF)", type=["pdf"], key="cs_upload")
+    # The bill is shown BEFORE the Submit button, not after it. With the button first,
+    # the obvious next click came before the chance to check the file, which is the
+    # wrong order for the one irreversible thing a customer does on this screen.
+    if up is not None:
+        st.markdown("**Check this is the right bill, then submit it.**")
+        st.image(C.preview_png(up.getvalue()), width=430)
+        st.write("")
     c1, c2 = st.columns([1, 3])
     submitted = c1.button("Submit claim", type="primary", key="cs_submit", disabled=up is None)
     with c2:
         sample_pack_button(ctx, "cs_pack")
-    if up is not None and not submitted:
-        st.caption("Ready to submit:")
-        st.image(C.preview_png(up.getvalue()), width=430)
     if submitted:
         # A bill that came in before is not refused: it is checked like any other,
         # and "already claimed on this policy" becomes one more piece of evidence.
@@ -202,8 +206,9 @@ def customer_submit(ctx: Ctx) -> None:
     if last:
         c = ctx.store.claim(last)
         st.write("")
-        st.markdown(f"**{c['issuer_name']}** · claim {c['claim_id']} · you uploaded `{c['file_name']}`",
-                    unsafe_allow_html=True)
+        st.divider()
+        st.markdown(f"**Your last submission** · {c['issuer_name']} · claim {c['claim_id']} · "
+                    f"you uploaded `{c['file_name']}`", unsafe_allow_html=True)
         # The customer sees the STATUS of their claim, never the verdict, the findings or
         # the stage ladder. See components.claim_receipt for why.
         C.claim_receipt(c["status"], c["pdf"], CUSTOMER_TEXT[c["status"]])
@@ -249,29 +254,64 @@ def _claim_detail(ctx: Ctx, claim_id: str) -> None:
                    show_findings=True)
 
 
+def _open_claims_worst_first(ctx: Ctx) -> list[dict]:
+    """The officer's queue: worst first, and newest first within each group.
+
+    That is the order a claims officer works through, and it puts a claim submitted
+    during the demo at the top of the list.
+    """
+    rows = ctx.store.claims(statuses=OPEN_STATUSES)
+    order = {"On hold": 0, "In review": 1, "Waiting for hospital": 2, "Waiting for customer": 3}
+    rows.sort(key=lambda c: c["submitted_at"], reverse=True)
+    rows.sort(key=lambda c: order.get(c["status"], 9))
+    return rows
+
+
 def officer_inbox(ctx: Ctx) -> None:
+    """A work queue first, then one claim.
+
+    The screen used to open the top claim straight away, so an officer saw a verdict
+    before seeing what was waiting. Now it lists what is pending, like any work queue,
+    and the verdict and the evidence appear only once a claim is chosen.
+    """
     page_title("Claims inbox", "Only the claims that could not be proven. Proven claims are paid without you.")
-    open_claims = ctx.store.claims(statuses=OPEN_STATUSES)
+    open_claims = _open_claims_worst_first(ctx)
     m = ctx.store.measures()
     kpis([(str(len(open_claims)), "waiting for you"),
           (str(sum(c["status"] == "On hold" for c in open_claims)), "on hold (possible fraud)"),
           (str(m["auto_paid"]), "paid automatically on proof")])
     st.write("")
-    if not open_claims:
-        st.success("Inbox empty.")
+
+    chosen = st.session_state.get("officer_open")
+    if chosen and any(c["claim_id"] == chosen for c in open_claims):
+        if st.button("◂ Back to the queue", key="inbox_back"):
+            st.session_state.pop("officer_open", None)
+            st.rerun()
+        _claim_detail(ctx, chosen)
         return
-    # Worst first, and newest first within each group: what an officer works through,
-    # and it puts a claim submitted during the demo at the top.
-    order = {"On hold": 0, "In review": 1, "Waiting for hospital": 2, "Waiting for customer": 3}
-    open_claims.sort(key=lambda c: c["submitted_at"], reverse=True)
-    open_claims.sort(key=lambda c: order.get(c["status"], 9))
-    labels = {f"{c['customer_name']} · {c['issuer_name']} · {c['verdict']} · {c['status']} · {c['claim_id']}":
-              c["claim_id"] for c in open_claims}
-    story = st.session_state.get("story_claim")
-    if story and story in labels.values() and st.session_state.get("inbox_pick") not in labels:
-        st.session_state.inbox_pick = next(k for k, v in labels.items() if v == story)
-    pick = st.selectbox("Claim", list(labels), key="inbox_pick")
-    _claim_detail(ctx, labels[pick])
+
+    if not open_claims:
+        st.success("Nothing is waiting for you.")
+        return
+
+    st.markdown("**Waiting for a decision.** Worst first. Open one to see the verdict and the "
+                "evidence behind it.")
+    head = st.columns([2.1, 2.2, 2.6, 1.4, 2.0, 1.2])
+    for col, label in zip(head, ("Claim", "Customer", "Hospital", "Amount", "Why it is here", "")):
+        col.markdown(f'<span class="tl-muted"><b>{label}</b></span>', unsafe_allow_html=True)
+    for c in open_claims:
+        row = st.columns([2.1, 2.2, 2.6, 1.4, 2.0, 1.2])
+        row[0].write(c["claim_id"])
+        row[1].write(c["customer_name"])
+        row[2].write(c["issuer_name"])
+        # "could not read" claims have no amount, and saying so is the honest answer
+        row[3].write(inr(c["total_paise"]) if c["total_paise"] else "not readable")
+        row[4].markdown(_status_chip(c["status"]), unsafe_allow_html=True)
+        if row[5].button("Open", key=f"open_{c['claim_id']}"):
+            st.session_state.officer_open = c["claim_id"]
+            st.rerun()
+    st.caption(f"{len(open_claims)} claims are waiting. Everything else was settled without a person: "
+               f"{m['auto_paid']} paid on the issuer's proof.")
 
 
 # ==========================================================================

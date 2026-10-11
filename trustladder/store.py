@@ -231,15 +231,18 @@ class Store:
         issuer = self._issuer_for(result, bill_no)
         when = submitted_at or now()
         with self._conn() as c:
+            # The amount claimed is kept on the claim itself. The stored result drops the
+            # bill's fields, so an officer's queue could not show what is being asked for.
             c.execute(
                 "INSERT INTO claims (claim_id, customer_id, customer_name, issuer_name, bill_no, "
                 "submitted_at, file_name, pdf, verdict, risk, rule, registry, evidence_grade, reason, "
-                "independent_against, initial_action, status, truth, result_json) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "independent_against, initial_action, status, truth, total_paise, result_json) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (claim_id, customer_id, customer_name, issuer, bill_no, when, file_name, pdf,
                  result.verdict.value, result.risk, result.rule_applied, result.registry_answer.value,
                  result.evidence_grade.value, result.reason, independent_against, action, status,
-                 truth, json.dumps(_result_json(result))))
+                 truth, result.fields.total_paise if result.fields else 0,
+                 json.dumps(_result_json(result))))
         self.log(actor or customer_name, "customer", "Claim submitted", claim_id, file_name, when)
         self.log("TrustLadder", "system", f"{result.verdict.value} ({result.rule_applied.split(':')[0]})",
                  claim_id, f"{action} → {status}", when)
@@ -396,7 +399,7 @@ CREATE TABLE IF NOT EXISTS claims (
   submitted_at TEXT, file_name TEXT, pdf BLOB, verdict TEXT, risk TEXT, rule TEXT, registry TEXT,
   evidence_grade TEXT, reason TEXT, independent_against INTEGER, initial_action TEXT, status TEXT,
   officer_decision TEXT DEFAULT '', decided_by TEXT DEFAULT '', decided_at TEXT DEFAULT '',
-  truth TEXT DEFAULT '', result_json TEXT);
+  truth TEXT DEFAULT '', total_paise INTEGER DEFAULT 0, result_json TEXT);
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, actor TEXT, role TEXT, event TEXT,
   claim_id TEXT, detail TEXT);
