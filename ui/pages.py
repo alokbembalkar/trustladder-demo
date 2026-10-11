@@ -30,7 +30,8 @@ import streamlit as st
 from trustladder import crypto
 from trustladder.cases import HOSPITALS
 from trustladder.models import BillFields, LineItem
-from trustladder.policy import ALLOWED, COST_PER_HOUR_RS, MINUTES_PER_REVIEW, baseline, evaluate
+from trustladder.policy import (ALLOWED, COST_PER_HOUR_RS, HOLD, MINUTES_PER_REVIEW, PAY,
+                                REQUEST, REVIEW, baseline, evaluate, route)
 from trustladder.registry import RegistryStore, Verifier
 from trustladder.service import (enrol_hospital, issue_bill, resubmit_claim,
                                  submit_claim)
@@ -321,17 +322,22 @@ def officer_inbox(ctx: Ctx) -> None:
 def risk_dashboard(ctx: Ctx) -> None:
     """The risk head's screen.
 
-    Two things were unclear here and both are fixed in the wording: WHO this person is
-    and what they decide, and WHERE each number comes from. The screen shows two
-    different data sets - the demo's own sample month, and a larger what-if simulation -
-    and they were easy to read as one.
+    Twice now the complaint was that the role and the job were unclear. The screen
+    named the role but never said what this person DOES here, and its only control,
+    four policy menus, had no visible consequence, so it read as a page of numbers.
+
+    It is now three numbered things: what the month looks like, the one setting that
+    is theirs to make, and what changes as coverage grows. Changing the setting moves
+    a line of counts underneath it, so the trade-off is on screen instead of implied.
     """
     m = ctx.store.measures()
     page_title("Risk head's dashboard",
-               "You decide what happens to each verdict, and you own both sides of being wrong: "
-               "a fraud paid, and an honest customer held up.")
-    st.markdown(f"**This month's claims.** Every number below counts the **{m['claims']} claims** in "
-                f"this demo's sample month. Nothing here is a projection.")
+               "The insurer's Chief Risk Officer. A claims officer decides one claim at a time; "
+               "you set the rule that routes every claim, and you answer for both kinds of mistake.")
+
+    st.markdown("#### 1. Where this month stands")
+    st.caption(f"Every number here counts the {m['claims']} claims in this demo's sample month. "
+               "Nothing on this line is a projection.")
     held_word = "customer" if m["wrongful_holds"] == 1 else "customers"
     kpis([(f"{m['straight_through_pct']}%",
            f"paid automatically on the issuer's proof<br>{m['auto_paid']} of {m['claims']} claims, "
@@ -344,8 +350,11 @@ def risk_dashboard(ctx: Ctx) -> None:
                f"{m['released_after_review']} were released after review. Officer time so far: "
                f"about {m['officer_hours']} hours at {MINUTES_PER_REVIEW} minutes a case.")
     st.write("")
-    st.markdown("**Your decision: what happens to each verdict.** This is the institution's call, not "
-                "the software's. It applies to claims checked from now on.")
+
+    st.markdown("#### 2. Your decision: what happens to each verdict")
+    st.caption("This is the only thing on this screen you change, and it is the institution's call, "
+               "not the software's. Pick an action for each verdict and the line underneath shows "
+               "what that choice would do. It applies to claims checked from now on.")
     policy = ctx.store.policy()
     cols = st.columns(4)
     for col, verdict in zip(cols, ("Authentic", "Suspicious", "Tampered", "Inconclusive")):
@@ -354,10 +363,22 @@ def risk_dashboard(ctx: Ctx) -> None:
         if choice != policy[verdict]:
             ctx.store.set_policy(verdict, choice, ctx.user["name"])
             st.toast(f"Policy saved: {verdict} → {choice}")
-    st.caption("'Pay' is offered only for Authentic: no setting can pay a bill the hospital has not "
-               "confirmed. That limit is in the code, not in this menu.")
+            st.rerun()
+    policy = ctx.store.policy()
+    verdicts = [c["verdict"] for c in ctx.store.claims()]
+    r = route(verdicts, policy)
+    st.markdown(
+        f'<div class="tl-reason"><b>With this setting, this month\'s {len(verdicts)} claims would go:</b> '
+        f'{r[PAY]} paid automatically · {r[REVIEW]} to a person · {r[HOLD]} held and investigated · '
+        f'{r[REQUEST]} sent back for a clearer copy.</div>', unsafe_allow_html=True)
+    st.caption("Move one menu and watch that line. Sending more to a person catches more, and costs "
+               "officer time and delays honest customers; sending less does the opposite. "
+               "**'Pay' is offered only for Authentic: no setting can pay a bill the hospital has not "
+               "confirmed.** That limit is in the code, not in this menu.")
     st.write("")
-    with st.expander("A separate what-if: a larger month of 150 claims, as more hospitals join"):
+
+    st.markdown("#### 3. What changes as more hospitals join")
+    with st.expander("A separate what-if: a larger month of 150 claims"):
         st.caption("This is NOT the sample month above. It is a synthetic month of 150 claims, used to "
                    "show how much is settled without a person as coverage grows.")
         sim = json.loads((ctx.data_dir / "simulation.json").read_text())

@@ -756,3 +756,36 @@ def test_tc68_the_officer_lands_on_a_queue_not_on_a_verdict():
     back = _texts(at)
     assert 'data-testid="tl-verdict"' not in back and "Waiting for a decision" in back, \
         "Back must return to the queue"
+
+
+def test_tc69_the_risk_head_screen_says_the_role_the_job_and_the_consequence():
+    """TC-69. Steps: sign in as the risk head; read the screen; change one policy menu.
+    Expected: the screen names the role and contrasts it with the claims officer's job,
+    numbers the three things on the page, and shows what the current setting would do to
+    this month's claims. Changing a menu moves those counts, so the control has a visible
+    consequence instead of being four menus with no effect."""
+    at = _login("riskhead")
+    texts = _texts(at)
+    assert "Chief Risk Officer" in texts, "the role must be named"
+    assert "one claim at a time" in texts, "it must contrast with the claims officer's job"
+    for heading in ("1. Where this month stands", "2. Your decision", "3. What changes"):
+        assert heading in texts, heading
+    assert "would go:" in texts, "the consequence of the current setting must be on screen"
+
+    import re
+    def counts(t):
+        m = re.search(r"would go:</b> (\d+) paid automatically · (\d+) to a person · "
+                      r"(\d+) held and investigated · (\d+) sent back", t)
+        assert m, "the routing line is missing or has changed shape"
+        return tuple(int(g) for g in m.groups())
+
+    before = counts(texts)
+    at.selectbox(key="pol_Tampered").set_value("Human review").run()
+    after = counts(_texts(at))
+    assert after != before, "changing the policy must change what the screen says would happen"
+    assert after[2] == 0, "nothing is held once Tampered goes to review"
+    assert after[1] > before[1], "those claims move to a person instead"
+
+    # and the guarantee still holds whatever is chosen
+    assert "no setting can pay a bill the hospital has not confirmed" in _texts(at)
+    assert "Pay" not in at.selectbox(key="pol_Tampered").options

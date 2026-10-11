@@ -48,6 +48,20 @@ def validate(policy: dict) -> None:
             raise ValueError(f"'{action}' is not allowed for {verdict}: only proof clears.")
 
 
+def route(verdicts: list[str], policy: dict) -> dict:
+    """How a policy WOULD route a set of verdicts. Counts actions, nothing else.
+
+    The risk head's screen uses this to show the consequence of the setting they are
+    looking at: change a dropdown and the counts move. Without it the policy controls
+    were four menus with no visible effect, which is not a decision anyone can weigh.
+    """
+    validate(policy)
+    out = {PAY: 0, REVIEW: 0, HOLD: 0, REQUEST: 0}
+    for v in verdicts:
+        out[policy[v]] += 1
+    return out
+
+
 def _tally(rows: list[dict], action_of) -> dict:
     """Count outcomes in both directions for any verdict->action mapping."""
     out = {"claims": len(rows), "paid_straight_through": 0, "to_person": 0, "held": 0,

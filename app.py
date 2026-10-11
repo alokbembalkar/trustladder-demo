@@ -119,9 +119,11 @@ STEPS = [
      "Only claims that could not be proven reach a person, and they arrive with the reason and the "
      "evidence behind it."),
     ("riskhead", "Dashboard", "Risk head",
-     "Point at the three numbers.",
-     "Fraud stopped, and honest customers wrongly held: both are counted. Only proven bills are paid "
-     "automatically."),
+     "Point at the three numbers. Then change **Inconclusive** to **Ask customer for original** and "
+     "watch the line under the menus move.",
+     "This is the one screen where the institution, not the software, makes a choice. Fraud stopped "
+     "and honest customers wrongly held are both counted, and moving one menu moves both. The one "
+     "thing no setting can do is pay a bill the hospital has not confirmed."),
     ("registry", "Network", "Registry",
      "Point at 'Patient data held: None'.",
      "The registry holds scrambled codes only. A complete theft would reveal nothing."),

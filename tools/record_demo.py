@@ -265,8 +265,17 @@ def main() -> None:
 
         # 4. Risk head
         next_step()
-        expect_text(pg, "Risk head's dashboard", "step 4: the screen names the role")
+        expect_text(pg, "Chief Risk Officer", "step 4: the screen names the role")
         expect_text(pg, "wrongly held", "step 4: both sides of the error are shown")
+        # the one control on this screen must visibly change something
+        before = pg.inner_text("body").split("would go:")[1].split("\n")[0]
+        pg.get_by_role("combobox", name="Inconclusive").click()
+        pg.get_by_role("option", name="Ask customer for original").click()
+        settle(pg)
+        after = pg.inner_text("body").split("would go:")[1].split("\n")[0]
+        if after == before:
+            raise SystemExit("TC-30 FAILED: step 4: changing the policy changed nothing on screen")
+        print("TC-30 pass: step 4: changing the policy moves the counts on screen")
         pg.wait_for_timeout(READ)
         still(pg, "risk_dashboard")
 
