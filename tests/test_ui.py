@@ -660,3 +660,53 @@ def test_tc66_the_audit_trail_names_actors_by_one_convention():
     assert issued["actor"].endswith(" billing"), issued["actor"]
     assert claimed["actor"] == store.customer(cid)["name"], \
         f"the live claim is logged against {claimed['actor']!r}, not the customer"
+
+
+VERDICT_WORDS = ("Authentic", "Suspicious", "Tampered", "Inconclusive")
+
+
+def test_tc67_the_customer_is_never_shown_the_verdict():
+    """TC-67. Steps: the customer submits a genuine bill and then the same bill with the
+    total raised; look at the Submit a claim screen after each, and at My claims.
+    Expected: the customer sees the STATUS of their claim and what happens next, and
+    never the verdict, the findings or the four-stage ladder. Telling someone who just
+    uploaded a forged bill that it came back 'Tampered', with the checks that caught it,
+    would coach a fraudster. The officer, who acts on it, still sees all of it."""
+    store, verifier = _store(), Verifier(RegistryStore(DATA_DIR))
+    cid = store.user("customer")["customer_id"]
+    pdf = (DATA_DIR / "showcase" / "01_genuine_bill.pdf").read_bytes()
+    bill = read_bill(pdf)[1]
+    paid = submit_claim(store, verifier, cid, pdf, "bill.pdf")
+    edited = submit_claim(store, verifier, cid,
+                          render_altered(bill, bill.total_paise + 5000000, joined=bool(bill.ticket)),
+                          "bill_edited.pdf")
+    assert _store().claim(edited)["verdict"] == "Tampered", "the forged copy must be caught"
+
+    for claim_id in (paid, edited):
+        at = _login("customer")
+        at.session_state["cs_last"] = claim_id          # as if they had just uploaded it
+        at = _go(at, "customer", "Submit a claim")
+        at.run()
+        texts = _texts(at)
+        status = _store().claim(claim_id)["status"]
+        assert f'data-testid="tl-claim-status">{status}<' in texts, f"{claim_id}: status not shown"
+        for word in VERDICT_WORDS:
+            assert f'data-testid="tl-verdict">{word}<' not in texts, \
+                f"{claim_id}: the customer is being shown the verdict {word}"
+        assert "What was found" not in texts, f"{claim_id}: findings shown to the customer"
+        assert 'class="tl-strip"' not in texts, f"{claim_id}: the stage ladder shown to the customer"
+
+    # My claims: the same rule, one card per claim
+    at = _login("customer")
+    texts = _texts(at)
+    assert "What was found" not in texts and 'class="tl-strip"' not in texts
+    assert "on hold while it is investigated" in texts.lower(), \
+        "the customer should be told where the claim stands, in their own words"
+
+    # the officer, who must act on it, still sees everything
+    at = _login("officer")
+    at.selectbox(key="inbox_pick").set_value(
+        next(o for o in at.selectbox(key="inbox_pick").options if edited in o)).run()
+    otexts = _texts(at)
+    assert 'data-testid="tl-verdict">Tampered<' in otexts, "the officer must see the verdict"
+    assert "What was found" in otexts, "the officer must see what was found"

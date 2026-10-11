@@ -18,7 +18,7 @@ from trustladder import evidence
 from trustladder.decide import RULE_TEXT
 from trustladder.models import LadderResult
 
-from .theme import REGISTRY_COLOUR, TEAL, VERDICT_COLOUR, chip
+from .theme import REGISTRY_COLOUR, STATUS_COLOUR, TEAL, VERDICT_COLOUR, chip
 
 ARCH = json.loads((Path(__file__).resolve().parent.parent / "trustladder" / "architecture.json").read_text())
 
@@ -49,6 +49,34 @@ def verdict_banner(r: LadderResult, next_step: str = "") -> None:
         f'<div class="tl-verdict" style="background:{colour}">'
         f'<div class="big" data-testid="tl-verdict">{r.verdict.value}</div>'
         f'<div class="sub">{next_step or r.queue}</div></div>', unsafe_allow_html=True)
+
+
+def claim_receipt(status: str, pdf_bytes: bytes, next_step: str) -> None:
+    """What the CUSTOMER sees after submitting a claim: the status, and nothing more.
+
+    A policyholder is never shown the verdict, the findings or the four-stage ladder.
+    Two reasons, and the second one matters more.
+
+    It is not their language. "Tampered", "R2" and "Verify" are an insurer's words, and a
+    customer wants to know whether they are getting paid and whether they must do anything.
+
+    And it would coach a fraudster. Someone who has just uploaded an edited bill and is told
+    the machine called it "Tampered", with the checks that caught it, learns exactly what to
+    change next time. An honest customer gains nothing from that detail either. So the
+    customer sees the status an insurer would really send them, and the evidence stays with
+    the people who act on it: the claims officer and the auditor.
+    """
+    colour = STATUS_COLOUR.get(status, "#475569")
+    col_doc, col_status = st.columns([2, 3], gap="large")
+    with col_doc:
+        st.image(preview_png(pdf_bytes), width="stretch")
+    with col_status:
+        st.markdown(
+            f'<div class="tl-verdict" style="background:{colour}">'
+            f'<div class="big" data-testid="tl-claim-status">{status}</div>'
+            f'<div class="sub">Your claim</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="tl-reason">{next_step}</div>', unsafe_allow_html=True)
+        st.caption("Questions about this claim? Contact your insurer and quote the claim number.")
 
 
 _REGISTRY_PLAIN = {

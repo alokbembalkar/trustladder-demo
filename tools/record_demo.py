@@ -8,7 +8,8 @@ the real browser surface while doing it (test case TC-30).
 The story (signed in as the presenter, who steps through the six screens):
   0  sign in
   1  Hospital      issues a bill; the genuine PDF is downloaded
-  2  Customer      uploads that PDF on the one upload screen: paid on proof;
+  2  Customer      uploads that PDF on the one upload screen: Paid. The customer is
+                   shown the STATUS of their claim, never the verdict or the findings;
                    then, on that SAME screen, the bill is edited in the demo toolkit
                    (the forger's editor, which needs no upload of its own) and the
                    edited copy is uploaded: Tampered
@@ -129,6 +130,21 @@ def expect_verdict(pg: Page, expected: str, what: str) -> None:
     print(f"TC-30 pass: {what} = {expected}")
 
 
+def expect_claim_status(pg: Page, expected: str, what: str) -> None:
+    """What the CUSTOMER sees: the status of their claim, never a verdict."""
+    loc = pg.locator("[data-testid='tl-claim-status']:visible").last
+    loc.wait_for(timeout=SLOW)
+    shown = loc.inner_text().strip()
+    if shown != expected:
+        raise SystemExit(f"TC-30 FAILED: {what}: expected {expected}, browser shows {shown}")
+    if pg.locator("[data-testid='tl-verdict']:visible").count():
+        raise SystemExit(f"TC-30 FAILED: {what}: the customer is being shown a verdict")
+    for banned in ("What was found", "Rule R"):
+        if banned in pg.inner_text("body"):
+            raise SystemExit(f"TC-30 FAILED: {what}: '{banned}' is on the customer's screen")
+    print(f"TC-30 pass: {what} = {expected} (and no verdict shown to the customer)")
+
+
 def main() -> None:
     BUILD.mkdir(exist_ok=True)
     raw_dir = BUILD / "raw_video"
@@ -185,8 +201,7 @@ def main() -> None:
         settle(pg)
         pg.get_by_role("button", name="Submit claim").click()
         settle(pg)
-        expect_verdict(pg, "Authentic", "step 2: the uploaded bill")
-        expect_text(pg, "Paid", "step 2: paid on proof")
+        expect_claim_status(pg, "Paid", "step 2: the customer's own bill, paid on proof")
         pg.wait_for_timeout(READ)
         still(pg, "customer_upload")
 
@@ -212,7 +227,7 @@ def main() -> None:
         settle(pg)
         pg.get_by_role("button", name="Submit claim").click()
         settle(pg)
-        expect_verdict(pg, "Tampered", "step 2: the edited copy, same screen, same customer")
+        expect_claim_status(pg, "On hold", "step 2: the edited copy, same screen, same customer")
         pg.wait_for_timeout(READ)
         still(pg, "customer_tampered")
 

@@ -182,7 +182,7 @@ def customer_submit(ctx: Ctx) -> None:
     """The customer's only way in: upload the bill PDF the hospital gave them."""
     cid = ctx.user["customer_id"]
     page_title("Submit a claim", "Upload the bill your hospital gave you. It is checked the moment you "
-                                 "submit, and you see the result straight away.")
+                                 "submit, and you are told straight away where your claim stands.")
     up = st.file_uploader("Your bill (PDF)", type=["pdf"], key="cs_upload")
     c1, c2 = st.columns([1, 3])
     submitted = c1.button("Submit claim", type="primary", key="cs_submit", disabled=up is None)
@@ -201,12 +201,12 @@ def customer_submit(ctx: Ctx) -> None:
     last = st.session_state.get("cs_last")
     if last:
         c = ctx.store.claim(last)
-        r = result_from_json(json.loads(c["result_json"]))
         st.write("")
-        st.markdown(f"**{c['issuer_name']}** · claim {c['claim_id']} · you uploaded `{c['file_name']}` "
-                    + _status_chip(c["status"]), unsafe_allow_html=True)
-        # The bill that was uploaded, beside what the check concluded.
-        C.verdict_view(r, c["pdf"], next_step=CUSTOMER_TEXT[c["status"]], show_graph=C.details_on())
+        st.markdown(f"**{c['issuer_name']}** · claim {c['claim_id']} · you uploaded `{c['file_name']}`",
+                    unsafe_allow_html=True)
+        # The customer sees the STATUS of their claim, never the verdict, the findings or
+        # the stage ladder. See components.claim_receipt for why.
+        C.claim_receipt(c["status"], c["pdf"], CUSTOMER_TEXT[c["status"]])
 
 
 # ==========================================================================
