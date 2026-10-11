@@ -748,6 +748,11 @@ def test_tc68_the_officer_lands_on_a_queue_not_on_a_verdict():
         assert c["claim_id"] in texts, c["claim_id"]
         assert at.button(key=f"open_{c['claim_id']}"), c["claim_id"]
 
+    # A real queue holds many people's bills at many hospitals. One name repeated down
+    # the list reads like one person's file, not an insurer's inbox.
+    assert len({c["customer_name"] for c in queue}) > 1, "the queue must show different patients"
+    assert len({c["issuer_name"] for c in queue}) > 1, "the queue must show different hospitals"
+
     cid = _open_top(at)
     assert _verdict(at) == _store().claim(cid)["verdict"], "the verdict appears once a claim is chosen"
     assert "What was found" in _texts(at)

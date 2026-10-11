@@ -253,6 +253,8 @@ def main() -> None:
         if pg.locator("[data-testid='tl-verdict']:visible").count():
             raise SystemExit("TC-30 FAILED: step 3: a verdict is shown before a claim is chosen")
         print("TC-30 pass: step 3: no verdict until the officer picks a claim")
+        pg.wait_for_timeout(READ)
+        still(pg, "officer_queue")
         pg.get_by_role("button", name="Open").first.click()
         settle(pg)
         expect_verdict(pg, "Tampered", "step 3: the claim the officer opened")
