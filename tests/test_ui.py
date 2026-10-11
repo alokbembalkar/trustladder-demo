@@ -110,16 +110,23 @@ def test_tc41_each_role_lands_on_its_own_home_with_its_own_menu():
         nav = [r for r in at.radio if r.key == f"nav_{role}"]
         # a role with a single screen has no menu at all: nothing to get lost in
         assert (nav[0].options if nav else [homes[role]]) == items, role
-        assert homes[role] in _texts(at), role
+        # the heading may name the role too ("Risk head's dashboard"), so compare loosely
+        assert homes[role].lower() in _texts(at).lower(), role
         assert 'class="tl-role"' in _texts(at)
 
 
 def test_tc42_role_isolation():
     """TC-42. Steps: sign in as the customer, then as the hospital.
-    Expected: the customer sees only Meera's own claims (3) and no officer or
-    risk pages; the hospital's screens never show a claim or who checked a bill."""
+    Expected: the customer sees their own claims and nobody else's, and has no officer
+    or risk pages; the hospital's screens never show a claim or who checked a bill."""
+    store = _store()
+    mine = store.claims(customer_id=store.user("customer")["customer_id"])
     at = _login("customer")
-    assert _texts(at).count("claim CLM-") == 3
+    shown = _texts(at)
+    assert shown.count("claim CLM-") == len(mine), "every claim of theirs, and only theirs"
+    others = [c["claim_id"] for c in store.claims()
+              if c["customer_id"] != store.user("customer")["customer_id"]]
+    assert not [cid for cid in others if cid in shown], "another customer's claim is visible"
     for other in ("Claims inbox", "Impact dashboard", "Audit trail", "Network"):
         assert other not in at.radio(key="nav_customer").options
     at = _go(_login("hospital"), "hospital", "My bills")
@@ -173,7 +180,7 @@ def test_tc45_customer_sends_clearer_copy():
     Expected: that claim is re-judged Authentic and shows Paid; the trail logs
     'Clearer copy re-submitted'."""
     waiting = _store().claims(customer_id="CUST-001", statuses=("Waiting for customer",))
-    assert len(waiting) == 1
+    assert waiting, "the sample world must leave at least one claim waiting on the customer"
     cid = waiting[0]["claim_id"]
     at = _login("customer")
     sel = at.selectbox(key=f"cc_pick_{cid}")
@@ -198,7 +205,10 @@ def test_tc46_officer_decision_moves_the_numbers():
     assert _store().claim(cid)["status"] == "Rejected"
     assert _store().measures()["rejected"] == before + 1
     at = _login("riskhead")
-    assert f'<div class="v">{before + 1}</div><div class="l">stopped as fraud after review' in _texts(at)
+    frauds = _store().measures()["sample_frauds"]
+    assert f'<div class="v">{before + 1} of {frauds}</div>' in _texts(at), \
+        "the risk head's rejected count must move with the officer's decision"
+    assert "known frauds rejected after review" in _texts(at)
     ev = [e for e in _store().audit() if e["claim_id"] == cid]
     assert any(e["event"] == "Rejected and referred to investigation" and "machine verdict was" in e["detail"]
                for e in ev)
@@ -430,10 +440,10 @@ def test_tc55_simple_by_default():
 def test_tc56_guided_steps_for_the_presenter():
     """TC-56. Steps: sign in as presenter; press Next through every step.
     Expected: each step shows a 'Do:' and a 'Say:' line and switches to the right
-    LOGIN; the story visits the customer's ONE upload screen twice in a row, so there
-    is no second customer account and no separate sample-bill tab; Back is disabled on
-    the first step and Next on the last; no exceptions."""
-    expected = ["hospital", "customer", "customer", "officer", "riskhead", "registry", "auditor"]
+    LOGIN; there is ONE customer step, because both uploads happen on one screen with
+    one button; Back is disabled on the first step and Next on the last; no
+    exceptions."""
+    expected = ["hospital", "customer", "officer", "riskhead", "registry", "auditor"]
     at = _login("presenter")
     assert at.button(key="step_back").disabled
     for i, login in enumerate(expected):
@@ -500,20 +510,25 @@ def test_tc58_there_is_exactly_one_place_to_upload_a_bill():
 
 
 def test_tc59_separate_logins_and_no_person_hardcoded_in_the_screens():
-    """TC-59. Steps: sign in as each of the eight logins and read the sidebar.
-    Expected: eight working logins including two separate customers; the screens name
-    roles, not people, so no seeded person's name appears in the interface."""
+    """TC-59. Steps: sign in as each of the eight logins and read who the screen says
+    you are.
+    Expected: eight working logins including two separate customers, and the SIGNED-IN
+    IDENTITY is always a role, never a person. Claim data is a different matter: a claim
+    must name the party who made it, or an officer could not do their job, so a person's
+    name on a claim is correct and only the chrome is checked here."""
     store = _store()
     for uid in ("hospital", "customer", "customer2", "officer", "riskhead", "registry", "auditor",
                 "presenter"):
         assert store.authenticate(uid, DEMO_PASSWORD), uid
     assert store.user("customer")["customer_id"] != store.user("customer2")["customer_id"]
+    people = {c["name"] for c in store.customers()}
     for uid, shown in (("customer", "Customer"), ("customer2", "Second customer"),
                        ("officer", "Claims officer"), ("hospital", "Billing desk")):
         at = _login(uid)
-        texts = _texts(at)
-        assert f"**{shown}**" in texts, uid
-        assert "Meera" not in texts, f"{uid}: screens must not hard-code a person"
+        assert f"**{shown}**" in _texts(at), uid
+        who = next(m.value for m in at.sidebar.markdown if 'class="tl-role"' in m.value)
+        assert not [n for n in people if n in who], \
+            f"{uid}: the signed-in identity names a person: {who!r}"
 
 
 def test_tc60_the_forgery_is_made_by_the_forger_not_the_hospital():
@@ -546,18 +561,17 @@ def test_tc60_the_forgery_is_made_by_the_forger_not_the_hospital():
 
 
 def test_tc63_only_one_upload_box_on_the_screen_that_takes_the_forged_copy():
-    """TC-63. Steps: sign in as presenter and walk to step 3, the step where the
-    forged copy is submitted.
+    """TC-63. Steps: sign in as presenter and walk to step 2, the one customer step,
+    where both the genuine bill and the forged copy are submitted.
     Expected: exactly ONE file-upload box is on screen, the claim form's. The demo
     toolkit in the sidebar offers the bill it already holds, so the presenter is
     never asked to upload the same bill in two places."""
     at = _login("presenter")
-    for _ in range(2):                       # step 1 -> 2 -> 3
-        at.button(key="step_next").click().run()
-    assert at.session_state["step"] == 2, "step 3 of the guided story"
+    at.button(key="step_next").click().run()          # step 1 -> 2, the one customer step
+    assert at.session_state["step"] == 1, "step 2 of the guided story"
     assert not at.exception
     uploaders = at.get("file_uploader")
-    assert len(uploaders) == 1, f"expected one upload box on step 3, found {len(uploaders)}"
+    assert len(uploaders) == 1, f"expected one upload box on the customer step, found {len(uploaders)}"
     assert uploaders[0].key == "cs_upload", "the one upload box is the customer's claim form"
     assert any("toolkit" in (e.label or "").lower() for e in at.get("expander")), \
         "the toolkit is still there; it just does not ask for a file"

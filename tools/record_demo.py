@@ -5,17 +5,17 @@ the real browser surface while doing it (test case TC-30).
     .venv/bin/python tools/record_demo.py                 # local app on :8765
     .venv/bin/python tools/record_demo.py <url> --check   # browser checks only, no video
 
-The story (signed in as the presenter, who steps through the seven screens):
+The story (signed in as the presenter, who steps through the six screens):
   0  sign in
   1  Hospital      issues a bill; the genuine PDF is downloaded
-  2  Customer      uploads that PDF on the one upload screen: paid on proof
-  3  Customer      the SAME customer, the SAME screen: the bill is edited in the demo
-                   toolkit (the forger's editor, which needs no upload of its own) and
-                   the edited copy is uploaded: Tampered
-  4  Officer       opens it (same bill number) and rejects it
-  5  Risk head     impact dashboard; simulated month as hospitals join
-  6  Registry      the network; a forged line is rejected
-  7  Auditor       the trail of everything above; the rule and the AI architecture
+  2  Customer      uploads that PDF on the one upload screen: paid on proof;
+                   then, on that SAME screen, the bill is edited in the demo toolkit
+                   (the forger's editor, which needs no upload of its own) and the
+                   edited copy is uploaded: Tampered
+  3  Officer       opens it (same bill number), sees WHAT was found, and rejects it
+  4  Risk head     impact dashboard; a separate what-if as hospitals join
+  5  Registry      the network; a forged line is rejected
+  6  Auditor       the trail of everything above; the rule and the AI architecture
 
 There is exactly one place a bill is uploaded, and it takes a genuine bill or a
 tampered one; the officer has no separate sample-bill tab.
@@ -145,7 +145,7 @@ def main() -> None:
         still(pg, "login")
 
         # 0. Sign in as the presenter; always start from the same clean story.
-        caption(pg, "TrustLadder: one hospital bill, seen by every party. The presenter follows seven "
+        caption(pg, "TrustLadder: one hospital bill, seen by every party. The presenter follows six "
                     "guided steps; each shows what to click and what to say.", 5200)
         pg.get_by_role("textbox", name="User ID").fill("presenter")
         pg.get_by_role("textbox", name="Password").fill(PASSWORD)
@@ -190,21 +190,19 @@ def main() -> None:
         pg.wait_for_timeout(READ)
         still(pg, "customer_upload")
 
-        # 3. The forger edits that bill in the demo toolkit, and the SAME customer
-        #    uploads the edited copy on the SAME screen. (A hospital never produces a
-        #    tampered bill, and there is only one place to upload one.)
-        next_step()
-        expect_text(pg, "Your bill (PDF)", "step 3: the same one upload screen")
+        # Still step 2, same screen, same button: the forger edits that bill in the demo
+        # toolkit and the SAME customer uploads the edited copy here. No step change,
+        # because there is one customer step and one place to upload a bill.
         if pg.get_by_text("Second customer").count():
-            raise SystemExit("TC-30 FAIL step 3: the story must stay with one customer account")
+            raise SystemExit("TC-30 FAIL: the story must stay with one customer account")
         pg.get_by_text("Demo toolkit: the forger's PDF editor").click()
         pg.wait_for_timeout(900)
         # The toolkit starts from the bill it already holds, so the presenter is never
         # asked for the same file twice. Exactly one upload box may be on screen here.
         n_up = pg.locator("input[type='file']").count()
         if n_up != 1:
-            raise SystemExit(f"TC-30 FAIL step 3: expected one upload box on screen, found {n_up}")
-        print("TC-30 pass: step 3: exactly one upload box on screen (the claim form)")
+            raise SystemExit(f"TC-30 FAIL: expected one upload box on screen, found {n_up}")
+        print("TC-30 pass: step 2: exactly one upload box on screen (the claim form)")
         with pg.expect_download() as d2:
             pg.get_by_role("button", name="Download the edited copy").click()
         tampered = genuine.parent / d2.value.suggested_filename
@@ -214,28 +212,30 @@ def main() -> None:
         settle(pg)
         pg.get_by_role("button", name="Submit claim").click()
         settle(pg)
-        expect_verdict(pg, "Tampered", "step 3: the edited copy of the same bill, same customer")
+        expect_verdict(pg, "Tampered", "step 2: the edited copy, same screen, same customer")
         pg.wait_for_timeout(READ)
         still(pg, "customer_tampered")
 
-        # 4. The officer opens it and rejects it
+        # 3. The officer opens it and rejects it
         next_step()
-        expect_verdict(pg, "Tampered", "step 4: top of the officer's inbox")
-        expect_text(pg, "bill SMH/", "step 4: the same bill number")
+        expect_verdict(pg, "Tampered", "step 3: top of the officer's inbox")
+        expect_text(pg, "bill SMH/", "step 3: the same bill number")
+        expect_text(pg, "What was found", "step 3: the officer can see WHY, without any switch")
         pg.wait_for_timeout(READ)
         still(pg, "officer_claim")
         pg.get_by_role("button", name="Reject as fraud").first.click()
         settle(pg)
 
-        # 5. Risk head
+        # 4. Risk head
         next_step()
-        expect_text(pg, "honest customers wrongly held", "step 5: risk dashboard")
+        expect_text(pg, "Risk head's dashboard", "step 4: the screen names the role")
+        expect_text(pg, "wrongly held", "step 4: both sides of the error are shown")
         pg.wait_for_timeout(READ)
         still(pg, "risk_dashboard")
 
-        # 6. Registry
+        # 5. Registry
         next_step()
-        expect_text(pg, "patient records held", "step 6: registry network")
+        expect_text(pg, "patient records held", "step 5: registry network")
         pg.wait_for_timeout(READ // 2)
         pg.get_by_text("Check that nobody has tampered with the registry").click()
         pg.wait_for_timeout(600)
@@ -245,10 +245,10 @@ def main() -> None:
         pg.wait_for_timeout(READ)
         still(pg, "registry_network")
 
-        # 7. Auditor
+        # 6. Auditor
         next_step()
         # The table is drawn on a canvas; the summary line under it is plain text.
-        expect_text(pg, "5 rejected", "step 7: officer's rejection in the audit summary (4 seeded + 1)")
+        expect_text(pg, "5 rejected", "step 6: officer's rejection in the audit summary (4 seeded + 1)")
         pg.wait_for_timeout(READ)
         still(pg, "audit_trail")
         menu(pg, "How decisions are made")

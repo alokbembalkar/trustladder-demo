@@ -243,7 +243,10 @@ def _claim_detail(ctx: Ctx, claim_id: str) -> None:
                 ctx.store.decide(claim_id, "ask_customer", ctx.user["name"])
                 st.rerun()
 
-    C.verdict_view(r, c["pdf"], next_step=c["initial_action"], actions=decision_buttons)
+    # The officer is the one person asked to call something fraud, so they see what
+    # was found without having to turn anything on.
+    C.verdict_view(r, c["pdf"], next_step=c["initial_action"], actions=decision_buttons,
+                   show_findings=True)
 
 
 def officer_inbox(ctx: Ctx) -> None:
@@ -276,14 +279,33 @@ def officer_inbox(ctx: Ctx) -> None:
 # ==========================================================================
 
 def risk_dashboard(ctx: Ctx) -> None:
-    page_title("Dashboard", "Both sides of the risk: fraud stopped, and honest customers wrongly held.")
+    """The risk head's screen.
+
+    Two things were unclear here and both are fixed in the wording: WHO this person is
+    and what they decide, and WHERE each number comes from. The screen shows two
+    different data sets - the demo's own sample month, and a larger what-if simulation -
+    and they were easy to read as one.
+    """
     m = ctx.store.measures()
-    kpis([(f"{m['straight_through_pct']}%", f"paid automatically on proof ({m['auto_paid']} of {m['claims']})"),
-          (str(m["rejected"]), "stopped as fraud after review"),
-          (str(m["wrongful_holds"]), "honest customers wrongly held")])
-    st.caption(f"Sample month: {m['sample_frauds']} known frauds, {m['sample_frauds_paid']} paid automatically.")
+    page_title("Risk head's dashboard",
+               "You decide what happens to each verdict, and you own both sides of being wrong: "
+               "a fraud paid, and an honest customer held up.")
+    st.markdown(f"**This month's claims.** Every number below counts the **{m['claims']} claims** in "
+                f"this demo's sample month. Nothing here is a projection.")
+    held_word = "customer" if m["wrongful_holds"] == 1 else "customers"
+    kpis([(f"{m['straight_through_pct']}%",
+           f"paid automatically on the issuer's proof<br>{m['auto_paid']} of {m['claims']} claims, "
+           f"no officer involved"),
+          (f"{m['rejected']} of {m['sample_frauds']}",
+           f"known frauds rejected after review<br>{m['sample_frauds_paid']} were paid automatically"),
+          (f"{m['wrongful_holds']}",
+           f"honest {held_word} wrongly held<br>genuine bills stopped by the rule, then released")])
+    st.caption(f"The other {m['to_person']} claims went to a person: {m['open']} are still open and "
+               f"{m['released_after_review']} were released after review. Officer time so far: "
+               f"about {m['officer_hours']} hours at {MINUTES_PER_REVIEW} minutes a case.")
     st.write("")
-    st.markdown("**Your policy: what happens to each verdict**")
+    st.markdown("**Your decision: what happens to each verdict.** This is the institution's call, not "
+                "the software's. It applies to claims checked from now on.")
     policy = ctx.store.policy()
     cols = st.columns(4)
     for col, verdict in zip(cols, ("Authentic", "Suspicious", "Tampered", "Inconclusive")):
@@ -292,18 +314,24 @@ def risk_dashboard(ctx: Ctx) -> None:
         if choice != policy[verdict]:
             ctx.store.set_policy(verdict, choice, ctx.user["name"])
             st.toast(f"Policy saved: {verdict} → {choice}")
-    st.caption("'Pay' is offered only for Authentic: no setting can pay a bill the hospital has not confirmed.")
-    with st.expander("What happens as more hospitals join (simulated month of 150 claims)"):
+    st.caption("'Pay' is offered only for Authentic: no setting can pay a bill the hospital has not "
+               "confirmed. That limit is in the code, not in this menu.")
+    st.write("")
+    with st.expander("A separate what-if: a larger month of 150 claims, as more hospitals join"):
+        st.caption("This is NOT the sample month above. It is a synthetic month of 150 claims, used to "
+                   "show how much is settled without a person as coverage grows.")
         sim = json.loads((ctx.data_dir / "simulation.json").read_text())
         scenario = st.radio("Hospitals joined", list(sim["results"]), index=1, key="scenario", horizontal=True)
         rows = sim["results"][scenario]
         tl, base = evaluate(rows, policy), baseline(rows)
-        kpis([(f"{tl['straight_through_pct']}%", "paid automatically"),
-              (str(tl["fraud_paid"]), f"frauds paid (of {tl['fraud_total']})"),
-              (f"{base['fraud_paid']} / {base['genuine_held']}",
-               "an edit-detection tool: frauds paid / honest customers held")])
-        st.caption("Synthetic month; the mix (about 10% fraud, 8% photos, 8% re-saved files) is our assumption. "
-                   f"Officer time assumed at {MINUTES_PER_REVIEW} minutes per case at ₹{COST_PER_HOUR_RS}/hour.")
+        kpis([(f"{tl['straight_through_pct']}%", "paid automatically on proof"),
+              (f"{tl['fraud_paid']} of {tl['fraud_total']}", "frauds paid automatically by TrustLadder"),
+              (f"{base['fraud_paid']} of {base['fraud_total']}",
+               f"frauds paid by an edit-detection tool,<br>which also holds "
+               f"{base['genuine_held']} honest customers")])
+        st.caption("Synthetic month; the mix (about 10% fraud, 8% photos, 8% re-saved files) is our "
+                   f"assumption. Officer time assumed at {MINUTES_PER_REVIEW} minutes per case at "
+                   f"₹{COST_PER_HOUR_RS}/hour.")
 
 
 # ==========================================================================

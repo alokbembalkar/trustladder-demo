@@ -98,21 +98,22 @@ if not user:
 
 STEPS = [
     # role, page, short name, what to click, what to say
+    #
+    # There is ONE customer step, not two. Both uploads happen on the same screen
+    # with the same button, and splitting them into separate steps made it look as
+    # though the product wanted the bill in two places.
     ("hospital", "Issue a bill", "Hospital issues",
      "Press **Issue bill and publish**, then press **Download the bill (PDF)**. Keep that file.",
      "The hospital prints a random ticket on the bill and sends the registry two scrambled codes. "
      "No patient data leaves the hospital."),
     ("customer", "Submit a claim", "Customer uploads",
-     "Upload the **bill** you just downloaded, then press **Submit claim**.",
-     "The customer uploads their bill. The hospital's own record confirms it, so it is paid at once, "
-     "with no officer involved."),
-    ("customer", "Submit a claim", "The same bill, edited",
-     "In the sidebar, open **Demo toolkit**, check it is showing the bill you just issued, and press "
-     "**Download the edited copy** (that is what a forger does on their own computer). Then upload "
-     "that copy in the box on this screen and press **Submit claim**.",
-     "The same customer now sends the same bill with a bigger total. There is one place to upload a "
-     "bill and the check is the same either way: the hospital's record disagrees, and the insurer can "
-     "see it has had this bill before, so it is held for a person."),
+     "**First**, upload the bill you just downloaded and press **Submit claim**. "
+     "**Then**, in the sidebar open **Demo toolkit**, press **Download the edited copy**, upload "
+     "that copy in the same box and press **Submit claim** again.",
+     "One screen takes every bill, and the customer never says which kind it is. The first is "
+     "confirmed by the hospital's own record, so it is paid at once with no officer involved. The "
+     "second is the same bill with a bigger total, so the record disagrees and it is held for a "
+     "person."),
     ("officer", "Claims inbox", "Officer decides",
      "Open the top claim (the edited bill) and press **Reject as fraud**.",
      "Only claims that could not be proven reach a person, and they arrive with the reason and the "

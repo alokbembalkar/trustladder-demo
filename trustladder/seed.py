@@ -72,6 +72,24 @@ def db_path(data_dir: Path = DATA_DIR) -> Path:
     return Path(data_dir) / "trustladder.db"
 
 
+def _stays_open(kind: str, issuer_id: str, decision: str | None) -> bool:
+    """Will this seeded claim still be sitting in the officer's inbox at the end?
+
+    The officer's inbox is the one place a presenter opens a claim, and the demo's
+    story is about one patient, so every claim left open must be hers. Anything the
+    officer already decided, and anything the issuer confirmed outright, is history
+    and may belong to any of the other customers: without them the risk head's
+    percentages would be one person's claims, which is not a portfolio.
+    """
+    # Only release and reject close a claim. Asking the hospital or the customer
+    # leaves it open and waiting, so those still belong to the demo's patient.
+    if decision in ("release", "reject"):
+        return False
+    if kind in ("altered", "fabricated", "genuine_scan"):
+        return True                                    # held, referred, or unreadable
+    return issuer_id not in JOINED                     # no issuer to ask: never cleared
+
+
 def _bill_for(rng, issuer_id, customer, serial, day) -> BillFields:
     name, _, _, bp = HOSPITALS[issuer_id]
     b = random_bill(rng, issuer_id, name, bp, serial, f"2026-03-{day:02d}")
@@ -203,7 +221,9 @@ def build_world(data_dir: Path = DATA_DIR) -> Store:
         + [("altered", "IN-HOSP-NIRAMAY-SGL-0612", 12, "reject")]
     )
     for i, (kind, hid, day, decision) in enumerate(plan):
-        cust = others[i % len(others)]
+        # Claims that will still be open belong to the demo's patient; closed history
+        # is spread across the other customers. See _stays_open.
+        cust = meera if _stays_open(kind, hid, decision) else others[i % len(others)]
         serial += 1
         bill = _bill_for(rng, hid, cust, serial, day)
         joined = hid in JOINED

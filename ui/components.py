@@ -89,14 +89,32 @@ def plain_reason(r: LadderResult) -> str:
 
 
 def verdict_view(r: LadderResult, pdf_bytes: bytes, next_step: str = "", show_graph: bool = True,
-                 actions=None) -> None:
-    """One verdict. Simple by default; the technical detail appears with the switch."""
+                 actions=None, show_findings: bool = False) -> None:
+    """One verdict. Simple by default; the technical detail appears with the switch.
+
+    `show_findings` lists what was actually found, in plain words, without the switch.
+    The claims officer gets it: they are the person being asked to call something fraud,
+    and a count like "3 kinds of problem seen" is not something anyone can act on. Rule
+    numbers and the evidence graph stay behind the switch, so the screen stays readable.
+    """
     col_doc, col_ladder = st.columns([2, 3], gap="large")
     with col_doc:
         st.image(preview_png(pdf_bytes), width="stretch")
     with col_ladder:
         verdict_banner(r, next_step or r.queue)
         st.markdown(f'<div class="tl-reason">{plain_reason(r)}</div>', unsafe_allow_html=True)
+        if show_findings and not details_on():
+            if r.findings:
+                st.markdown("**What was found**")
+                for f in r.findings:
+                    st.markdown(f"- {f.detail}")
+            elif r.read_status.value != "Read":
+                st.markdown("**What was found**")
+                st.markdown(f"- {r.read_note}")
+            else:
+                st.markdown("**What was found**")
+                st.markdown("- Nothing wrong in the document itself. That is not proof: a bill typed "
+                            "from a blank page leaves no traces either, which is why it is not cleared.")
         ladder_strip(r)
         if actions:
             actions()
