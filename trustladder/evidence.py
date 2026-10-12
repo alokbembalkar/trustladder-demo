@@ -6,9 +6,11 @@ are grouped by FAMILY: findings in the same family can share one cause (one edit
 can break the arithmetic AND change the font), so they are not independent.
 Each family is one independent line of evidence.
 
-The rule (decide.py) needs "two independent findings" to convict. The graph makes
-that visible: count the families that point AGAINST the document. It is built
-from exactly the same inputs the rule uses, and a test checks the two agree.
+The issuer registry is one family like any other, and it is the only one that can
+settle a document on its own, in either direction. When the issuer has not spoken,
+the rule needs two independent findings to convict, and the graph makes that
+visible: count the families pointing AGAINST the document. It is built from exactly
+the same inputs the rule uses, and a test checks the two agree.
 
 Rendered with Graphviz DOT (drawn in the browser, no system install needed).
 """
@@ -20,7 +22,9 @@ from dataclasses import dataclass
 from .models import LadderResult, RegistryAnswer
 
 # Registry answers that count as a line of evidence against the document.
-_REGISTRY_AGAINST = {RegistryAnswer.MISMATCH, RegistryAnswer.NO_RECORD}
+# The issuer speaking against the document. 'No record' is NOT here: outside the
+# period an issuer has published for, a missing ticket is silence, not evidence.
+_REGISTRY_AGAINST = {RegistryAnswer.MISMATCH, RegistryAnswer.NOT_ISSUED}
 
 
 @dataclass

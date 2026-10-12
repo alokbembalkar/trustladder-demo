@@ -83,7 +83,7 @@ def _bill_for(rng, issuer_id, customer, serial, day) -> BillFields:
 SAMPLE_PACK = [
     ("01_genuine_bill.pdf", "Bill 1: genuine, from a hospital that has joined", "Authentic"),
     ("02_same_bill_total_raised.pdf", "Bill 1 with its total raised afterwards (same bill number)", "Tampered"),
-    ("03_made_from_nothing.pdf", "Same patient and hospital, but a bill the hospital never issued", "Suspicious"),
+    ("03_made_from_nothing.pdf", "Same patient and hospital, but a bill the hospital never issued", "Tampered"),
     ("04_genuine_hospital_not_joined.pdf", "Genuine, from a hospital that has not joined", "Inconclusive"),
     ("05_photo_of_bill_1.pdf", "A blurred phone photo of bill 1", "Inconclusive"),
     ("06_made_from_nothing_not_joined.pdf", "A fake from a hospital that has not joined", "Inconclusive"),

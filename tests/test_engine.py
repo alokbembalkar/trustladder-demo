@@ -7,6 +7,7 @@ screens are covered in test_ui.py.
 """
 
 import copy
+import datetime as _dt
 import io
 import itertools
 import json
@@ -60,24 +61,30 @@ def test_tc02_altered_total_is_tampered():
     assert "Rs 1,86,400.00" in r.reason and "Rs 2,86,400.00" in r.reason
 
 
-def test_tc03_fabricated_joined_passes_every_check_but_is_not_cleared():
-    """TC-03. Steps: run 03_made_from_nothing.pdf (typed from a blank page).
-    Expected: ZERO screening findings (appearance checks cannot see it), registry
-    No record, verdict Suspicious via R5, sent to a person."""
+def test_tc03_fabricated_at_a_joined_issuer_is_caught_outright():
+    """TC-03. Steps: run 03_made_from_nothing.pdf (typed from a blank page) against a
+    hospital that has joined and published for the period the bill is dated in.
+    Expected: ZERO screening findings, because appearance checks cannot see a document
+    that was never edited. Caught anyway, and caught OUTRIGHT: the issuer has published
+    a code for every bill it issued in that period and this ticket is not among them,
+    so the answer is Not issued and the verdict is Tampered on that evidence alone.
+    This is the whole point of the registry. Anything less and a clean fabrication walks
+    through on 'nothing looks wrong'."""
     r = _run("03_made_from_nothing.pdf")
-    assert r.findings == []
-    assert r.registry_answer is RegistryAnswer.NO_RECORD
-    assert r.verdict is Verdict.SUSPICIOUS and r.rule_applied.startswith("R5")
-    assert r.needs_human
+    assert r.findings == [], "a bill typed from a blank page leaves no edit traces"
+    assert r.registry_answer is RegistryAnswer.NOT_ISSUED
+    assert r.verdict is Verdict.TAMPERED and r.rule_applied.startswith("R3")
+    assert r.evidence_grade is EvidenceGrade.CONTRADICTION
+    assert r.needs_human and r.queue.startswith("Hold")
 
 
 def test_tc04_genuine_not_joined_is_referred_not_cleared():
     """TC-04. Steps: run 04_genuine_hospital_not_joined.pdf.
-    Expected: registry Not covered, verdict Inconclusive via R8,
+    Expected: registry Not covered, verdict Inconclusive via R6,
     Consistency-grade, sent to a person, reason says it is not proof."""
     r = _run("04_genuine_hospital_not_joined.pdf")
     assert r.registry_answer is RegistryAnswer.NOT_COVERED
-    assert r.verdict is Verdict.INCONCLUSIVE and r.rule_applied.startswith("R8")
+    assert r.verdict is Verdict.INCONCLUSIVE and r.rule_applied.startswith("R6")
     assert r.evidence_grade is EvidenceGrade.CONSISTENCY
     assert r.needs_human and "not proof" in r.reason
 
@@ -96,9 +103,14 @@ def test_tc05_unreadable_scan_is_never_a_mismatch():
 
 def test_tc06_fabricated_not_joined_is_the_honest_gap():
     """TC-06. Steps: run 06_made_from_nothing_not_joined.pdf.
-    Expected: indistinguishable from TC-04 (Inconclusive via R8), and never Authentic."""
+    Expected: indistinguishable from TC-04 (Inconclusive via R6), and never Authentic.
+    This is the honest gap and the argument for coverage: the same fabrication that is
+    caught outright at a joined hospital (TC-03) cannot be told from a genuine bill when
+    there is no issuer to ask."""
     r = _run("06_made_from_nothing_not_joined.pdf")
-    assert r.verdict is Verdict.INCONCLUSIVE and r.rule_applied.startswith("R8")
+    assert r.verdict is Verdict.INCONCLUSIVE and r.rule_applied.startswith("R6")
+    assert _run("03_made_from_nothing.pdf").verdict is Verdict.TAMPERED, \
+        "the only difference between the two is whether the issuer had joined"
 
 
 # ---------------------------------------------------------------- reading & registry
@@ -141,7 +153,7 @@ def test_tc09_resaved_genuine_bill():
     """TC-09. Steps: run a genuine bill re-saved by a phone app, (a) from a joined
     hospital (published), (b) from a hospital that has not joined.
     Expected: (a) Authentic (proof outweighs file-history noise); (b) Suspicious
-    via R7, NOT Tampered (one family is not enough to convict)."""
+    via R5, NOT Tampered. With no issuer to ask, one family is not enough to convict."""
     store = RegistryStore(DATA_DIR)
     pub = Publisher(store, "IN-HOSP-SAHYOG-PUN-0101")
     bill = BillFields("IN-HOSP-SAHYOG-PUN-0101", "Sahyog Multispeciality Hospital", "SMH/2026/009001",
@@ -153,23 +165,33 @@ def test_tc09_resaved_genuine_bill():
     other = BillFields("IN-HOSP-SHANTI-STR-0419", "Shanti Clinic and Maternity Home", "SCM/2026/1",
                        "2026-03-12", "Asha Nair", [LineItem("Surgeon fee", 5000000)], 5000000)
     r2 = run_ladder(render_resaved(other, joined=False), Verifier(store))
-    assert r2.verdict is Verdict.SUSPICIOUS and r2.rule_applied.startswith("R7")
+    assert r2.verdict is Verdict.SUSPICIOUS and r2.rule_applied.startswith("R5")
 
 
 def test_tc10_rule_table_guarantees():
     """TC-10. Steps: apply the rule to every combination of read status x registry
     answer x 0-3 screening families.
-    Expected: Authentic only when read OK AND registry Verified; Tampered only
-    with at least two independent pieces of evidence; unreadable always Inconclusive."""
+    Expected, and these are the guarantees the whole product rests on:
+      * Authentic ONLY when the bill was read AND the issuer confirmed it. Nothing
+        else can ever clear a document.
+      * Tampered ONLY when the ISSUER contradicted the document, or two independent
+        screening families agree. Screening alone never convicts on one finding.
+      * The issuer's silence is never evidence: no record outside its published
+        period, or an issuer that has not joined, can never produce Tampered on its
+        own.
+      * Unreadable is always Inconclusive, whatever else is true."""
     fams = ["arithmetic", "file history", "fonts"]
+    issuer_against = (RegistryAnswer.MISMATCH, RegistryAnswer.NOT_ISSUED)
+    silence = (RegistryAnswer.NO_RECORD, RegistryAnswer.NOT_COVERED, RegistryAnswer.NOT_ASKED)
     for status, answer, n in itertools.product(ReadStatus, RegistryAnswer, range(4)):
         findings = [Finding(f, f, f) for f in fams[:n]]
         d = decide(status, answer, findings)
         if d.verdict is Verdict.AUTHENTIC:
             assert status is ReadStatus.OK and answer is RegistryAnswer.VERIFIED
         if d.verdict is Verdict.TAMPERED:
-            registry_evidence = answer in (RegistryAnswer.MISMATCH, RegistryAnswer.NO_RECORD)
-            assert n + (1 if registry_evidence else 0) >= 2
+            assert answer in issuer_against or n >= 2, (answer, n)
+        if status is ReadStatus.OK and answer in silence and n == 0:
+            assert d.verdict is Verdict.INCONCLUSIVE, "silence plus nothing is not a conviction"
         if status is ReadStatus.COULD_NOT_READ:
             assert d.verdict is Verdict.INCONCLUSIVE
 
@@ -233,18 +255,21 @@ def test_tc14_registry_holds_no_patient_data():
 
 
 def test_tc15_real_ticket_on_a_different_bill():
-    """TC-15. Steps: copy Meera's genuine ticket onto a clean bill with a different
-    patient (no edit traces).
-    Expected: Mismatch alone -> Suspicious via R3 (a person re-reads before
-    anyone is held), not Tampered."""
+    """TC-15. Steps: copy a genuine ticket onto a clean bill for a different patient,
+    leaving no edit traces at all.
+    Expected: the issuer issued that ticket, but not for this bill, so the answer is
+    Mismatch and the verdict is Tampered via R2 on that alone. There are no screening
+    findings to corroborate it and none are needed: the issuer's own signed record
+    contradicting the document is proof, not a hint."""
     store = RegistryStore(DATA_DIR)
     genuine = read_bill((DATA_DIR / "showcase" / "01_genuine_bill.pdf").read_bytes())[1]
     other = copy.deepcopy(genuine)
     other.patient = "Someone Else"
     r = run_ladder(render_genuine(other, joined=True), Verifier(store))
-    assert r.findings == []
+    assert r.findings == [], "a cleanly retyped bill leaves nothing for screening to find"
     assert r.registry_answer is RegistryAnswer.MISMATCH
-    assert r.verdict is Verdict.SUSPICIOUS and r.rule_applied.startswith("R3")
+    assert r.verdict is Verdict.TAMPERED and r.rule_applied.startswith("R2")
+    assert r.evidence_grade is EvidenceGrade.CONTRADICTION
 
 
 def test_tc16_freshly_issued_bill_verifies_immediately():
@@ -267,9 +292,10 @@ def test_tc16_freshly_issued_bill_verifies_immediately():
 
 def test_tc17_evidence_graph_agrees_with_the_rule():
     """TC-17. Steps: build the evidence graph for all six demo bills.
-    Expected: Tampered always has >= 2 independent lines against; Suspicious has
-    exactly 1; Authentic has proof and 0 against; the counts match the rule's
-    own family arithmetic; DOT output names the rule and the verdict."""
+    Expected: Tampered always rests either on the issuer contradicting the document or
+    on >= 2 independent lines; Suspicious has exactly 1; Authentic has proof and 0
+    against; the counts match the rule's own family arithmetic; DOT output names the
+    rule and the verdict."""
     from trustladder import evidence
     for f in ["01_genuine_bill.pdf", "02_same_bill_total_raised.pdf", "03_made_from_nothing.pdf",
               "04_genuine_hospital_not_joined.pdf", "05_photo_of_bill_1.pdf",
@@ -277,10 +303,12 @@ def test_tc17_evidence_graph_agrees_with_the_rule():
         r = _run(f)
         g = evidence.build(r)
         expected = len({x.family for x in r.findings}) + (
-            1 if r.registry_answer in (RegistryAnswer.MISMATCH, RegistryAnswer.NO_RECORD) else 0)
+            1 if r.registry_answer in (RegistryAnswer.MISMATCH, RegistryAnswer.NOT_ISSUED) else 0)
         assert g.independent_against == expected, f
         if r.verdict is Verdict.TAMPERED:
-            assert g.independent_against >= 2
+            # either the issuer itself contradicted the document, or two families did
+            assert g.independent_against >= 2 or r.registry_answer in (
+                RegistryAnswer.MISMATCH, RegistryAnswer.NOT_ISSUED), f
         if r.verdict is Verdict.SUSPICIOUS:
             assert g.independent_against == 1
         if r.verdict is Verdict.AUTHENTIC:
@@ -311,3 +339,49 @@ def test_tc18_the_prepared_bills_are_one_coherent_set():
     assert three.issuer_id == one.issuer_id and three.bill_no != one.bill_no
     for name in ("04_genuine_hospital_not_joined.pdf", "06_made_from_nothing_not_joined.pdf"):
         assert read[name].issuer_id == "IN-HOSP-SHANTI-STR-0419"
+
+
+def test_tc19_coverage_is_what_turns_a_missing_ticket_into_a_statement(tmp_path):
+    """TC-19. Steps: enrol a hospital with a coverage window, then check three bills it
+    has no record of: one dated inside the window, one dated before it joined, and one
+    dated after its last publication.
+    Expected: only the one INSIDE the window is Tampered. The other two are Inconclusive.
+
+    This is the safety property behind the whole change. 'The issuer has no record of
+    this' means two completely different things: either the issuer is telling us it
+    issued no such bill, or the issuer simply has not published for that period. Treating
+    the second as a conviction would call a genuine bill from before a hospital joined,
+    or one caught in the gap before its next batch, a forgery. The window is the issuer's
+    public undertaking, and the rule relies on nothing outside it."""
+    store = RegistryStore(tmp_path)
+    store.enrol_issuer("IN-HOSP-SAHYOG-PUN-0101", "Sahyog Multispeciality Hospital", "Pune", "SH",
+                       when="2026-03-01")
+    pub = Publisher(store, "IN-HOSP-SAHYOG-PUN-0101")
+    real = BillFields("IN-HOSP-SAHYOG-PUN-0101", "Sahyog Multispeciality Hospital", "SMH/2026/1",
+                      "2026-03-10", "A Patient", [LineItem("Surgeon fee", 5000000)], 5000000,
+                      pub.new_ticket())
+    pub.publish([real], when=_dt.datetime.fromisoformat("2026-03-31T10:00:00+05:30"))
+    verifier = Verifier(store)
+
+    def check(bill_date: str):
+        b = BillFields("IN-HOSP-SAHYOG-PUN-0101", "Sahyog Multispeciality Hospital",
+                       "SMH/2026/999", bill_date, "A Patient",
+                       [LineItem("Surgeon fee", 5000000)], 5000000, pub.new_ticket())
+        return run_ladder(render_genuine(b, joined=True), verifier)
+
+    inside = check("2026-03-15")
+    assert inside.registry_answer is RegistryAnswer.NOT_ISSUED
+    assert inside.verdict is Verdict.TAMPERED and inside.rule_applied.startswith("R3")
+
+    before_joining = check("2026-01-05")
+    assert before_joining.registry_answer is RegistryAnswer.NO_RECORD
+    assert before_joining.verdict is Verdict.INCONCLUSIVE, \
+        "a genuine bill from before the hospital joined must never be convicted"
+
+    after_last_batch = check("2026-06-20")
+    assert after_last_batch.registry_answer is RegistryAnswer.NO_RECORD
+    assert after_last_batch.verdict is Verdict.INCONCLUSIVE, \
+        "a bill in the gap before the next batch must never be convicted"
+
+    for r in (before_joining, after_last_batch):
+        assert "outside the period" in r.registry_note, "the note must say why nothing follows"

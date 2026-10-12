@@ -327,11 +327,11 @@ def test_tc51_sample_bills_show_expected_verdicts(index):
 
 def test_tc52_auditor_sees_rule_and_architecture():
     """TC-52. Steps: auditor → How decisions are made.
-    Expected: rules R0-R8 listed; the architecture diagram draws every component
+    Expected: rules R0-R6 listed; the architecture diagram draws every component
     in architecture.json, solid when built and dashed when target."""
     at = _go(_login("auditor"), "auditor", "How decisions are made")
     texts = _texts(at)
-    for rid in [f"R{i}" for i in range(9)]:
+    for rid in [f"R{i}" for i in range(7)]:
         assert f"<b>{rid}</b>" in texts
     html = next(m.value for m in at.markdown if 'data-testid="tl-architecture"' in m.value)
     import base64

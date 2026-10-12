@@ -51,11 +51,26 @@ class ReadStatus(str, Enum):
 
 
 class RegistryAnswer(str, Enum):
-    """The four answers the issuer registry can give (step 3, Verify)."""
-    VERIFIED = "Verified"          # ticket found and every field matches the issuer's record
-    MISMATCH = "Mismatch"          # ticket found, but the details differ from what was issued
-    NO_RECORD = "No record"        # the issuer has joined, but never issued this ticket
-    NOT_COVERED = "Not covered"    # the issuer has not joined, so the registry cannot answer
+    """What the issuer registry says about a document (step 3, Verify).
+
+    Three of these are the ISSUER SPEAKING, and they are proof either way:
+
+        VERIFIED     the issuer confirms this exact document   -> proof FOR
+        MISMATCH     the issuer issued this ticket, with other details -> proof AGAINST
+        NOT_ISSUED   the issuer published everything it issued for this period,
+                     and this ticket is not among it            -> proof AGAINST
+
+    The other two are SILENCE, and silence is never evidence:
+
+        NO_RECORD    the ticket is not in the file, but the bill falls outside the
+                     period the issuer has published for, so nothing follows
+        NOT_COVERED  the issuer has not joined at all
+    """
+    VERIFIED = "Verified"
+    MISMATCH = "Mismatch"
+    NOT_ISSUED = "Not issued"
+    NO_RECORD = "No record"
+    NOT_COVERED = "Not covered"
     NOT_ASKED = "Not asked"        # the registry was not consulted (e.g. the bill could not be read)
 
 
@@ -83,7 +98,8 @@ class EvidenceGrade(str, Enum):
     CONSISTENCY  the document is internally coherent and nothing looks wrong.
                  A document typed from a blank page can be perfectly coherent,
                  so this never clears anything.
-    CONTRADICTION  independent evidence that the document is not as issued.
+    CONTRADICTION  the issuer's own record says the document is not as issued, or two
+                 independent screening checks agree it is not.
     NONE         nothing usable could be established (e.g. the bill was unreadable).
     """
     PROOF = "Proof-grade"

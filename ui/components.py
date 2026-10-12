@@ -82,7 +82,8 @@ def claim_receipt(status: str, pdf_bytes: bytes, next_step: str) -> None:
 _REGISTRY_PLAIN = {
     "Verified": ("Hospital confirms it", "ok"),
     "Mismatch": ("Hospital's record differs", "bad"),
-    "No record": ("Hospital never issued it", "bad"),
+    "Not issued": ("Hospital says it issued no such bill", "bad"),
+    "No record": ("Outside what the hospital has published", "neutral"),
     "Not covered": ("Hospital not in registry yet", "neutral"),
     "Not asked": ("Not asked (unreadable)", "neutral"),
 }
@@ -213,13 +214,11 @@ def architecture_diagram() -> None:
 RULE_TABLE = [
     ("R0", "The bill could not be read", "Inconclusive"),
     ("R1", "The issuer confirms the bill (Verified)", "Authentic"),
-    ("R2", "Issuer: Mismatch, plus at least one independent screening finding", "Tampered"),
-    ("R3", "Issuer: Mismatch, nothing else", "Suspicious"),
-    ("R4", "Issuer: No record, plus at least one independent screening finding", "Tampered"),
-    ("R5", "Issuer: No record, nothing else", "Suspicious"),
-    ("R6", "Issuer not joined, two or more independent screening findings", "Tampered"),
-    ("R7", "Issuer not joined, one screening finding", "Suspicious"),
-    ("R8", "Issuer not joined, nothing looks wrong", "Inconclusive"),
+    ("R2", "The issuer issued that ticket, but with other details (Mismatch)", "Tampered"),
+    ("R3", "The issuer published every bill it issued and this is not one (Not issued)", "Tampered"),
+    ("R4", "No issuer answer, and two independent screening findings", "Tampered"),
+    ("R5", "No issuer answer, one screening finding", "Suspicious"),
+    ("R6", "No issuer answer, nothing looks wrong", "Inconclusive"),
 ]
 
 

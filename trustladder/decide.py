@@ -1,35 +1,52 @@
 """
 Step 2, Decide: the published decision rule.
 
-This is the core of TrustLadder. It is a RULE, not a score: a short table that
-a claims officer, an auditor, an ombudsman or a regulator can read and apply by
+This is the core of TrustLadder. It is a RULE, not a score: a short table that a
+claims officer, an auditor, an ombudsman or a regulator can read and apply by
 hand, and that gives the same answer every time.
 
-Three principles shape it:
+The principle, in one line:
 
-  * Only proof clears. A document is Authentic only when the issuer itself
-    confirms it (registry: Verified). "Nothing looks wrong" is consistency-grade
-    evidence, and a fabricated bill can be perfectly consistent, so it never
-    clears anything. No findings means refer, never clear.
+    Only the issuer can clear a document, and only the issuer can condemn one.
+    Without the issuer, a conviction needs two independent findings.
 
-  * A conviction needs two independent findings. Tampered requires at least two
-    pieces of evidence from different families (the registry counts as one
-    family, each screening family as another). One finding alone is Suspicious.
+That symmetry is the point, and it used to be missing. A registry match cleared a
+document outright, but a registry contradiction only made it "Suspicious" and
+waited for corroboration from screening checks that are far weaker evidence. It
+treated the strongest signal in the system as though it were the weakest. If the
+hospital's own signed record says it never issued this bill, that is not a hint.
 
-  * Unreadable is not wrong. A document that could not be read is Inconclusive
-    and goes to its own queue; it never reaches the registry comparison.
+Three things the issuer can say, and all three are proof:
+
+    VERIFIED     this is exactly what we issued             -> Authentic
+    MISMATCH     we issued that ticket, with other details  -> Tampered
+    NOT ISSUED   we have published every bill we issued in
+                 this period, and this is not one of them   -> Tampered
+
+And two kinds of silence, which are never evidence:
+
+    NO RECORD    the ticket is absent, but the bill is dated outside the period
+                 the issuer has published for
+    NOT COVERED  the issuer has not joined
+
+Silence is where screening does the work, and where the two-findings rule still
+holds. A document typed from a blank page leaves no edit traces at all, so
+"nothing looks wrong" can never clear anything, and one finding alone convicts
+nobody.
+
+Unreadable is not wrong. A document that could not be read is Inconclusive and
+never reaches the registry comparison, so our own misreading can never be
+reported as the issuer contradicting the document.
 
 The table (checked top to bottom, first match wins):
 
-  R0  bill could not be read                        -> Inconclusive
-  R1  registry Verified                             -> Authentic
-  R2  registry Mismatch  + >=1 screening family     -> Tampered
-  R3  registry Mismatch  alone                      -> Suspicious
-  R4  registry No record + >=1 screening family     -> Tampered
-  R5  registry No record alone                      -> Suspicious
-  R6  Not covered        + >=2 screening families   -> Tampered
-  R7  Not covered        + 1 screening family       -> Suspicious
-  R8  Not covered        + no findings              -> Inconclusive
+    R0  bill could not be read                      -> Inconclusive
+    R1  issuer: verified                            -> Authentic
+    R2  issuer: mismatch                            -> Tampered
+    R3  issuer: not issued                          -> Tampered
+    R4  no issuer answer + >=2 screening families   -> Tampered
+    R5  no issuer answer + 1 screening family       -> Suspicious
+    R6  no issuer answer + no findings              -> Inconclusive
 """
 
 from __future__ import annotations
@@ -54,26 +71,23 @@ DEFAULT_QUEUE = {
     "R0": "Could-not-read queue: request a clearer copy or the original",
     "R1": "Straight-through: pay",
     "R2": "Hold and investigate",
-    "R3": "Human review: re-read, then confirm with the issuer",
+    "R3": "Hold and investigate",
     "R4": "Hold and investigate",
-    "R5": "Human review: confirm with the issuer",
-    "R6": "Hold and investigate",
-    "R7": "Human review",
-    "R8": "Human review: no proof available, so it is never cleared automatically",
+    "R5": "Human review",
+    "R6": "Human review: no proof available, so it is never cleared automatically",
 }
 
 RULE_TEXT = {
     "R0": "The bill could not be read, so nothing was compared.",
     "R1": "The issuer confirmed the bill. Only proof clears, and this is proof.",
-    "R2": "The issuer's record contradicts the bill, and an independent check agrees.",
-    "R3": "The issuer's record contradicts the bill, but nothing else does, so a person "
-          "re-reads it before anyone is held.",
-    "R4": "The issuer never issued this ticket, and an independent check also found a problem.",
-    "R5": "'No record' is one finding, and one finding is not enough to convict.",
-    "R6": "No issuer record exists, but two independent checks found problems.",
-    "R7": "No issuer record exists and one check found a problem. One finding is not "
+    "R2": "The issuer issued this ticket, but not with these details. That is the issuer "
+          "contradicting the document, which is proof, not a hint.",
+    "R3": "The issuer has published every bill it issued in this period, and this one is not "
+          "among them. The hospital did not issue this bill.",
+    "R4": "No issuer answer is available, and two independent checks found problems.",
+    "R5": "No issuer answer is available and one check found a problem. One finding is not "
           "enough to convict.",
-    "R8": "No issuer record exists and nothing looks wrong. 'Nothing looks wrong' is not "
+    "R6": "No issuer answer is available and nothing looks wrong. 'Nothing looks wrong' is not "
           "proof, so the bill is referred, not cleared.",
 }
 
@@ -90,22 +104,18 @@ def decide(read_status: ReadStatus, registry: RegistryAnswer,
     if read_status is ReadStatus.COULD_NOT_READ:
         return _decision("R0", Verdict.INCONCLUSIVE, EvidenceGrade.NONE)
 
+    # The issuer speaking, in either direction, is proof and decides on its own.
     if registry is RegistryAnswer.VERIFIED:
         return _decision("R1", Verdict.AUTHENTIC, EvidenceGrade.PROOF)
-
     if registry is RegistryAnswer.MISMATCH:
-        if n_families >= 1:
-            return _decision("R2", Verdict.TAMPERED, EvidenceGrade.CONTRADICTION)
-        return _decision("R3", Verdict.SUSPICIOUS, EvidenceGrade.CONTRADICTION)
+        return _decision("R2", Verdict.TAMPERED, EvidenceGrade.CONTRADICTION)
+    if registry is RegistryAnswer.NOT_ISSUED:
+        return _decision("R3", Verdict.TAMPERED, EvidenceGrade.CONTRADICTION)
 
-    if registry is RegistryAnswer.NO_RECORD:
-        if n_families >= 1:
-            return _decision("R4", Verdict.TAMPERED, EvidenceGrade.CONTRADICTION)
-        return _decision("R5", Verdict.SUSPICIOUS, EvidenceGrade.CONTRADICTION)
-
-    # Not covered (or not asked): only the screening checks are available.
+    # Silence from the issuer: absent outside its published period, not joined, or not
+    # asked. Only the screening checks are left, and they never clear anything.
     if n_families >= 2:
-        return _decision("R6", Verdict.TAMPERED, EvidenceGrade.CONTRADICTION)
+        return _decision("R4", Verdict.TAMPERED, EvidenceGrade.CONTRADICTION)
     if n_families == 1:
-        return _decision("R7", Verdict.SUSPICIOUS, EvidenceGrade.CONTRADICTION)
-    return _decision("R8", Verdict.INCONCLUSIVE, EvidenceGrade.CONSISTENCY)
+        return _decision("R5", Verdict.SUSPICIOUS, EvidenceGrade.CONTRADICTION)
+    return _decision("R6", Verdict.INCONCLUSIVE, EvidenceGrade.CONSISTENCY)

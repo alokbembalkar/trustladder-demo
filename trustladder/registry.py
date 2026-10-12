@@ -52,7 +52,8 @@ class RegistryStore:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.directory_path.write_text(json.dumps(directory, indent=2, sort_keys=True))
 
-    def enrol_issuer(self, issuer_id: str, name: str, city: str, ticket_prefix: str) -> None:
+    def enrol_issuer(self, issuer_id: str, name: str, city: str, ticket_prefix: str,
+                     when: str | None = None) -> None:
         """Sign an issuer up: create its key pair and salt, list it publicly.
 
         This is the whole onboarding step for a hospital: no integration project
@@ -60,12 +61,20 @@ class RegistryStore:
         """
         directory = self.load_directory()
         private_b64, public_b64 = crypto.new_signing_key()
+        # The coverage window is the issuer's public undertaking: "I publish a code for
+        # every bill I issue, from this date onwards, and I have published up to this
+        # date." It is what turns a missing ticket into a statement. Without it, silence
+        # from the registry could only ever mean "we do not know".
+        # It holds dates, not documents: no patient, no amount, no bill.
+        covers_from = (when or _dt.date.today().isoformat())[:10]
         directory[issuer_id] = {
             "name": name,
             "city": city,
             "salt": crypto.new_salt(),
             "public_key": public_b64,
             "ticket_prefix": ticket_prefix,
+            "covers_from": covers_from,
+            "covers_to": covers_from,
         }
         self._save_directory(directory)
         # The private key is written to the hospital's own folder only.
@@ -137,7 +146,30 @@ class Publisher:
         published = self.store.load_file(self.issuer_id)
         published["batches"].append(batch)
         self.store.file_path(self.issuer_id).write_text(json.dumps(published, indent=2))
+        # Publishing extends the undertaking: everything issued up to this date is now
+        # in the file. A verifier can rely on a missing ticket only up to here.
+        directory = self.store.load_directory()
+        entry = directory.get(self.issuer_id)
+        if entry is not None:
+            day = when.date().isoformat()
+            if day > entry.get("covers_to", ""):
+                entry["covers_to"] = day
+                self.store._save_directory(directory)
         return batch
+
+
+def _within_coverage(bill_date: str, entry: dict) -> bool:
+    """Is this bill inside the period the issuer has publicly undertaken to cover?
+
+    Only inside that window does a missing ticket mean anything. Outside it, the
+    issuer simply has not spoken, and the rule must not treat silence as evidence:
+    that is how a genuine bill issued before a hospital joined, or in the gap before
+    its next publication, would be called a forgery.
+    """
+    start, end = entry.get("covers_from"), entry.get("covers_to")
+    if not (bill_date and start and end):
+        return False
+    return start <= bill_date[:10] <= end
 
 
 class Verifier:
@@ -186,17 +218,34 @@ class Verifier:
             return (RegistryAnswer.NOT_COVERED,
                     f"{bill.issuer_name or 'The issuer'} has not joined the registry, "
                     "so there is nothing to check against.")
+        covered = _within_coverage(bill.bill_date, entry)
+        window = f"{entry.get('covers_from', '?')} to {entry.get('covers_to', '?')}"
+
         if not bill.ticket:
-            # A joined hospital always prints a ticket; a missing one is itself
-            # a contradiction of how that issuer's bills look.
+            # A joined issuer prints a ticket on every bill it issues. Inside the period
+            # it has published for, a bill with no ticket cannot be one of theirs.
+            if covered:
+                return (RegistryAnswer.NOT_ISSUED,
+                        f"{entry['name']} prints a ticket on every bill it issues, and has published "
+                        f"every bill from {window}. This bill carries no ticket, so it is not one of "
+                        "theirs.")
             return (RegistryAnswer.NO_RECORD,
-                    f"{entry['name']} prints a ticket on every bill, but this bill carries none.")
+                    f"{entry['name']} prints a ticket on every bill, but this bill carries none, and "
+                    f"its date falls outside what they have published ({window}).")
 
         table, integrity_note = self._mirror_for(bill.issuer_id)
         salt = entry["salt"]
         key = crypto.code(canonical_ticket(bill.ticket), salt)
         if key not in table:
-            note = f"{entry['name']} has never issued ticket {bill.ticket}."
+            if covered:
+                # The issuer has published everything it issued for this period and this
+                # ticket is not among it. That is the issuer saying so, not an absence.
+                note = (f"{entry['name']} has published a code for every bill it issued from "
+                        f"{window}, and ticket {bill.ticket} is not among them. The hospital did "
+                        "not issue this bill.")
+                return RegistryAnswer.NOT_ISSUED, (note + " " + integrity_note).strip()
+            note = (f"{entry['name']} has no record of ticket {bill.ticket}, but this bill is dated "
+                    f"outside the period they have published ({window}), so nothing follows from that.")
             return RegistryAnswer.NO_RECORD, (note + " " + integrity_note).strip()
         value = crypto.code(canonical_record(bill), salt)
         if value == table[key]:

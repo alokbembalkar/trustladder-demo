@@ -58,7 +58,8 @@ SHOWCASE = [
      "file itself shows the edit.", "Tampered"),
     ("03_made_from_nothing.pdf", "Made from nothing (hospital has joined)",
      "Same patient and hospital, but a bill the hospital never issued. It passes every appearance "
-     "check; only the hospital can say it is not theirs.", "Suspicious"),
+     "check, and it is still caught outright: the hospital has published a code for every bill it "
+     "issued in this period, and this ticket is not among them.", "Tampered"),
     ("04_genuine_hospital_not_joined.pdf", "Genuine bill from a hospital that has not joined",
      "The same patient at a hospital outside the registry. Nothing can be proven, so it is referred, "
      "never cleared.", "Inconclusive"),
@@ -90,10 +91,16 @@ def _headline_bill(ticket: str, patient: str) -> BillFields:
                       sum(i.amount_paise for i in items), ticket)
 
 
-def _enrol(store: RegistryStore, ids: list[str]) -> None:
+# The showcase hospitals joined before the bills in the set were issued. The date
+# matters: an issuer's coverage window starts when it joins, and a missing ticket
+# only means "we did not issue this" for bills dated inside that window.
+SHOWCASE_JOINED_ON = "2026-02-20"
+
+
+def _enrol(store: RegistryStore, ids: list[str], when: str = SHOWCASE_JOINED_ON) -> None:
     for issuer_id in ids:
         name, city, prefix, _ = HOSPITALS[issuer_id]
-        store.enrol_issuer(issuer_id, name, city, prefix)
+        store.enrol_issuer(issuer_id, name, city, prefix, when)
 
 
 def build_showcase(data_dir: Path = DATA_DIR, patient: str = SHOWCASE_PATIENT) -> Path:

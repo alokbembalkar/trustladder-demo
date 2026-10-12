@@ -94,6 +94,6 @@ def enrol_hospital(store: Store, registry: RegistryStore, verifier: Verifier, is
                    actor: str, when: str | None = None) -> None:
     """The registry operator signs a hospital up: key pair, salt, a line in the directory."""
     name, city, prefix, _ = HOSPITALS[issuer_id]
-    registry.enrol_issuer(issuer_id, name, city, prefix)
+    registry.enrol_issuer(issuer_id, name, city, prefix, when)
     verifier.refresh()
     store.log(actor, "registry", "Hospital enrolled", "", f"{name}, {city}", when)
