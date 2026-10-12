@@ -61,12 +61,19 @@ def _go(at: AppTest, role: str, page: str) -> AppTest:
     return at
 
 
-def _queue() -> list[dict]:
-    """The officer's queue, in the order the inbox lists it: worst first, newest first."""
+def _queue(order: str = "Newest first") -> list[dict]:
+    """The officer's queue, in the order the inbox lists it.
+
+    This mirrors ui.pages._open_claims so the tests are reading the same list the
+    screen shows. The default is the screen's default.
+    """
     rows = _store().claims(statuses=OPEN_STATUSES)
-    order = {"On hold": 0, "In review": 1, "Waiting for hospital": 2, "Waiting for customer": 3}
-    rows.sort(key=lambda c: c["submitted_at"], reverse=True)
-    rows.sort(key=lambda c: order.get(c["status"], 9))
+    rows.sort(key=lambda c: (c["submitted_at"], c["claim_id"]), reverse=True)
+    if order == "Longest waiting first":
+        rows.reverse()
+    elif order == "Worst first":
+        rank = {"On hold": 0, "In review": 1, "Waiting for hospital": 2, "Waiting for customer": 3}
+        rows.sort(key=lambda c: rank.get(c["status"], 9))
     return rows
 
 
@@ -221,8 +228,9 @@ def test_tc46_officer_decision_moves_the_numbers():
     by one; the audit trail records the decision next to the machine verdict."""
     before = _store().measures()["rejected"]
     at = _login("officer")
-    assert _queue()[0]["status"] == "On hold", "the worst claim is at the top of the queue"
-    cid = _open_top(at)
+    cid = _queue("Worst first")[0]["claim_id"]
+    assert _store().claim(cid)["status"] == "On hold", "a possible fraud is waiting"
+    _open_claim(at, cid)
     at.button(key=f"dec_reject_{cid}").click().run()
     assert _store().claim(cid)["status"] == "Rejected"
     assert _store().measures()["rejected"] == before + 1
@@ -838,3 +846,36 @@ def test_tc70_the_officer_can_see_what_they_decided():
     # machine verdict and human decision are kept side by side, never collapsed into one
     row = next(c for c in _store().decided() if c["claim_id"] == cid)
     assert row["verdict"] == before["verdict"] and row["officer_decision"] != row["verdict"]
+
+
+def test_tc71_the_queue_shows_when_a_claim_arrived_and_can_be_sorted_by_it():
+    """TC-71. Steps: open the officer's queue; read the Submitted column; switch the
+    sort to 'Longest waiting first' and then to 'Worst first'.
+    Expected: every row carries its submission date and how long it has been waiting.
+    The default order is newest first, so a claim submitted during the demo is at the
+    top. Changing the sort really changes the order on screen: longest waiting first is
+    the exact reverse, and worst first brings a possible fraud up regardless of date."""
+    at = _login("officer")
+    texts = _texts(at)
+    assert "Submitted" in texts, "the queue must say when each claim arrived"
+    newest = _queue()
+    for c in newest:
+        assert c["submitted_at"][:10] in texts, f"no date shown for {c['claim_id']}"
+
+    dates = [c["submitted_at"] for c in newest]
+    assert dates == sorted(dates, reverse=True), "the default order is newest first"
+
+    oldest = _queue("Longest waiting first")
+    assert [c["claim_id"] for c in oldest] == [c["claim_id"] for c in newest][::-1]
+
+    at.radio(key="inbox_sort").set_value("Longest waiting first").run()
+    assert not at.exception
+    first_button = next(b.key for b in at.button if (b.key or "").startswith("open_"))
+    assert first_button == f"open_{oldest[0]['claim_id']}", \
+        "changing the sort must change which claim is at the top of the screen"
+
+    at.radio(key="inbox_sort").set_value("Worst first").run()
+    worst = _queue("Worst first")
+    assert _store().claim(worst[0]["claim_id"])["status"] == "On hold"
+    first_button = next(b.key for b in at.button if (b.key or "").startswith("open_"))
+    assert first_button == f"open_{worst[0]['claim_id']}"

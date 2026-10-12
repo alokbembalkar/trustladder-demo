@@ -262,16 +262,37 @@ def _claim_detail(ctx: Ctx, claim_id: str) -> None:
                    show_findings=True)
 
 
-def _open_claims_worst_first(ctx: Ctx) -> list[dict]:
-    """The officer's queue: worst first, and newest first within each group.
+SORT_ORDERS = ("Newest first", "Longest waiting first", "Worst first")
 
-    That is the order a claims officer works through, and it puts a claim submitted
-    during the demo at the top of the list.
+
+def _waited(submitted_at: str) -> str:
+    """How long this claim has been sitting, in words an officer thinks in."""
+    try:
+        when = _dt.datetime.strptime(submitted_at[:16], "%Y-%m-%d %H:%M")
+    except ValueError:
+        return ""
+    days = (_dt.datetime.now() - when).days
+    if days <= 0:
+        return "today"
+    return "1 day" if days == 1 else f"{days} days"
+
+
+def _open_claims(ctx: Ctx, order: str = "Newest first") -> list[dict]:
+    """The officer's queue, in the order they asked for.
+
+    Newest first puts the claim just submitted at the top, which is what a demo and
+    a same-day triage both want. Longest waiting first is how a real queue is worked
+    when a service level is in play. Worst first ignores the clock and brings the
+    possible fraud up. The date is on screen either way, so the order is never a
+    hidden assumption.
     """
     rows = ctx.store.claims(statuses=OPEN_STATUSES)
-    order = {"On hold": 0, "In review": 1, "Waiting for hospital": 2, "Waiting for customer": 3}
-    rows.sort(key=lambda c: c["submitted_at"], reverse=True)
-    rows.sort(key=lambda c: order.get(c["status"], 9))
+    rows.sort(key=lambda c: (c["submitted_at"], c["claim_id"]), reverse=True)
+    if order == "Longest waiting first":
+        rows.reverse()
+    elif order == "Worst first":
+        rank = {"On hold": 0, "In review": 1, "Waiting for hospital": 2, "Waiting for customer": 3}
+        rows.sort(key=lambda c: rank.get(c["status"], 9))
     return rows
 
 
@@ -283,7 +304,8 @@ def officer_inbox(ctx: Ctx) -> None:
     and the verdict and the evidence appear only once a claim is chosen.
     """
     page_title("Claims inbox", "Only the claims that could not be proven. Proven claims are paid without you.")
-    open_claims = _open_claims_worst_first(ctx)
+    order = st.session_state.get("inbox_sort", SORT_ORDERS[0])
+    open_claims = _open_claims(ctx, order)
     m = ctx.store.measures()
     kpis([(str(len(open_claims)), "waiting for you"),
           (str(sum(c["status"] == "On hold" for c in open_claims)), "on hold (possible fraud)"),
@@ -310,20 +332,31 @@ def officer_inbox(ctx: Ctx) -> None:
         st.success("Nothing is waiting for you.")
         return
 
-    st.markdown("**Waiting for a decision.** Worst first. Open one to see the verdict and the "
-                "evidence behind it.")
-    head = st.columns([2.1, 2.2, 2.6, 1.4, 2.0, 1.2])
-    for col, label in zip(head, ("Claim", "Customer", "Hospital", "Amount", "Why it is here", "")):
+    st.markdown("**Waiting for a decision.** Open one to see the verdict and the evidence "
+                "behind it.")
+    # A radio, not a dropdown. A dropdown's open list hangs over the first row and
+    # swallows the click meant for its Open button, which is exactly what happened the
+    # first time this was built. Three short options also read better than a closed menu.
+    st.radio("Sort by", SORT_ORDERS, key="inbox_sort", horizontal=True)
+    st.write("")
+
+    widths = [1.9, 2.0, 2.4, 1.3, 1.7, 1.9, 1.1]
+    head = st.columns(widths)
+    for col, label in zip(head, ("Claim", "Customer", "Hospital", "Amount", "Submitted",
+                                 "Why it is here", "")):
         col.markdown(f'<span class="tl-muted"><b>{label}</b></span>', unsafe_allow_html=True)
     for c in open_claims:
-        row = st.columns([2.1, 2.2, 2.6, 1.4, 2.0, 1.2])
+        row = st.columns(widths)
         row[0].write(c["claim_id"])
         row[1].write(c["customer_name"])
         row[2].write(c["issuer_name"])
         # "could not read" claims have no amount, and saying so is the honest answer
         row[3].write(inr(c["total_paise"]) if c["total_paise"] else "not readable")
-        row[4].markdown(_status_chip(c["status"]), unsafe_allow_html=True)
-        if row[5].button("Open", key=f"open_{c['claim_id']}"):
+        waited = _waited(c["submitted_at"])
+        row[4].markdown(f'{c["submitted_at"][:10]}<br><span class="tl-muted">{waited}</span>',
+                        unsafe_allow_html=True)
+        row[5].markdown(_status_chip(c["status"]), unsafe_allow_html=True)
+        if row[6].button("Open", key=f"open_{c['claim_id']}"):
             st.session_state.officer_open = c["claim_id"]
             st.rerun()
     st.caption(f"{len(open_claims)} claims are waiting. Everything else was settled without a person: "
