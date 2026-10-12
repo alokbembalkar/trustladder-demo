@@ -196,9 +196,15 @@ def test_tc45_customer_sends_clearer_copy():
     the Arogya bill from their documents and presses Send clearer copy.
     Expected: that claim is re-judged Authentic and shows Paid; the trail logs
     'Clearer copy re-submitted'."""
-    waiting = _store().claims(customer_id="CUST-001", statuses=("Waiting for customer",))
-    assert waiting, "the sample world must leave at least one claim waiting on the customer"
-    cid = waiting[0]["claim_id"]
+    # She starts with no claims, so the demo creates the situation: a blurred photo of a
+    # real bill comes back "could not read", which is a request for a clearer copy and
+    # never an accusation.
+    store, verifier = _store(), Verifier(RegistryStore(DATA_DIR))
+    me = store.user("customer")["customer_id"]
+    photo = (DATA_DIR / "showcase" / "05_photo_of_bill_1.pdf").read_bytes()
+    cid = submit_claim(store, verifier, me, photo, "photo_of_bill.pdf")
+    assert _store().claim(cid)["status"] == "Waiting for customer", \
+        "an unreadable copy is sent back to the customer, not accused"
     at = _login("customer")
     sel = at.selectbox(key=f"cc_pick_{cid}")
     sel.set_value(next(o for o in sel.options if "Arogya" in o)).run()
@@ -266,14 +272,20 @@ def test_tc48_registry_enrol_and_integrity():
 
 def test_tc49_sample_data_is_complete_and_consistent():
     """TC-49. Steps: read the seeded world.
-    Expected: 34 claims, 16 paid on proof, 1 wrongful hold, 8 known frauds with
-    0 paid automatically, 15 customers, 7 working logins; every joined hospital's
+    Expected: a month with claims in every outcome, no known fraud paid automatically,
+    exactly one wrongful hold, 15 customers and 7 working logins; the demo's own patient
+    starts with NO claims so her page is empty until she uploads; every joined hospital's
     ledger matches what the registry covers."""
     s = _store()
     m = s.measures()
-    assert (m["claims"], m["auto_paid"], m["wrongful_holds"]) == (34, 16, 1)
-    assert m["sample_frauds"] == 8 and m["sample_frauds_paid"] == 0
+    assert m["claims"] == 31 and m["auto_paid"] == 15 and m["wrongful_holds"] == 1
+    assert m["claims"] == m["auto_paid"] + m["to_person"], "every claim is accounted for"
+    assert m["sample_frauds"] == 8 and m["sample_frauds_paid"] == 0, "no known fraud paid on its own"
     assert len(s.customers()) == 15
+    assert not s.claims(customer_id=s.user("customer")["customer_id"]), \
+        "the demo's patient must start with no claim history"
+    assert s.documents_of_customer(s.user("customer")["customer_id"]), \
+        "she still holds bills, or she would have nothing to claim on"
     for uid in ("hospital", "customer", "officer", "riskhead", "registry", "auditor", "presenter"):
         assert s.authenticate(uid, DEMO_PASSWORD), uid
     reg = RegistryStore(DATA_DIR)
@@ -287,14 +299,15 @@ def test_tc49_sample_data_is_complete_and_consistent():
 def test_tc50_presenter_switches_roles_and_resets():
     """TC-50. Steps: sign in as presenter; issue a bill on step 1; press Reset demo.
     Expected: step 1 is the hospital's screen; the bill is really created; Reset puts
-    the world back to the seeded 34 claims and returns to step 1."""
+    the world back to exactly the seeded claims and returns to step 1."""
     at = _login("presenter")
     assert at.radio(key="nav_hospital").options == MENUS["hospital"]      # step 1 = hospital
+    seeded = _store().measures()["claims"]
     before = len(_store().bills_of_issuer("IN-HOSP-SAHYOG-PUN-0101"))
     at.button(key="h_issue").click().run()
     assert len(_store().bills_of_issuer("IN-HOSP-SAHYOG-PUN-0101")) == before + 1
     at.button(key="reset").click().run()
-    assert _store().measures()["claims"] == 34
+    assert _store().measures()["claims"] == seeded
     assert len(_store().bills_of_issuer("IN-HOSP-SAHYOG-PUN-0101")) == before
     assert at.session_state["step"] == 0
 
@@ -794,3 +807,34 @@ def test_tc69_the_risk_head_screen_says_the_role_the_job_and_the_consequence():
     # and the guarantee still holds whatever is chosen
     assert "no setting can pay a bill the hospital has not confirmed" in _texts(at)
     assert "Pay" not in at.selectbox(key="pol_Tampered").options
+
+
+def test_tc70_the_officer_can_see_what_they_decided():
+    """TC-70. Steps: the officer opens the top claim and presses Reject as fraud.
+    Expected: they are returned to the queue with the decision confirmed in words, the
+    claim is gone from the queue, and it is listed under 'Decided recently' with the
+    machine verdict beside the person's decision. A decision that simply made the claim
+    vanish gave the officer no way to confirm what had been recorded."""
+    at = _login("officer")
+    cid = _open_top(at)
+    before = _store().claim(cid)
+    at.button(key=f"dec_reject_{cid}").click().run()
+    assert not at.exception
+
+    texts = _texts(at)
+    assert "Waiting for a decision" in texts, "the officer is returned to the queue"
+    assert "Rejected and referred to investigation" in texts, "the decision is confirmed in words"
+    assert cid in texts and before["verdict"] in texts, \
+        "the confirmation names the claim and the machine verdict"
+    assert cid not in [c["claim_id"] for c in _queue()], "it has left the queue"
+
+    after = _store().claim(cid)
+    assert after["status"] == "Rejected"
+    assert after["officer_decision"] == "Rejected and referred to investigation"
+    assert cid in [c["claim_id"] for c in _store().decided()], "it is in the decided list"
+    assert any((e.label or "").startswith("Decided recently") for e in at.get("expander")), \
+        "the officer can go back and look at what they decided"
+
+    # machine verdict and human decision are kept side by side, never collapsed into one
+    row = next(c for c in _store().decided() if c["claim_id"] == cid)
+    assert row["verdict"] == before["verdict"] and row["officer_decision"] != row["verdict"]

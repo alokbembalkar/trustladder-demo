@@ -292,6 +292,18 @@ class Store:
         with self._conn() as c:
             return [dict(r) for r in c.execute(q, args)]
 
+    def decided(self, limit: int = 12) -> list[dict]:
+        """Claims a person has decided, most recently decided first.
+
+        An officer needs to see what they just did. Without this the claim simply
+        vanished from the queue and there was no way to confirm the decision or
+        revisit it.
+        """
+        with self._conn() as c:
+            return [dict(r) for r in c.execute(
+                "SELECT * FROM claims WHERE officer_decision != '' "
+                "ORDER BY decided_at DESC, claim_id DESC LIMIT ?", (limit,))]
+
     def claim(self, claim_id: str) -> dict | None:
         with self._conn() as c:
             r = c.execute("SELECT * FROM claims WHERE claim_id = ?", (claim_id,)).fetchone()

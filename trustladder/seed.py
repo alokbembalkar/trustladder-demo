@@ -154,24 +154,22 @@ def build_world(data_dir: Path = DATA_DIR) -> Store:
         store.add_bill(b.bill_no, b.issuer_id, b.issuer_name, "", b.patient, b.bill_date, b.total_paise,
                        b.ticket, True, render_genuine(b, joined=True), f"{b.bill_date} 12:00")
 
-    # 2. Meera's own story (the customer login).
-    #    a) the Sahyog bill from the proposal, Rs 1,86,400: already published by the showcase.
+    # 2. The demo's patient starts with NO CLAIM HISTORY.
+    #    She holds bills, so she has something to claim on, but she has never claimed.
+    #    Two reasons. Her page is empty until she uploads during the demo, so what appears
+    #    there is unmistakably what was just done. And her name shows up exactly once in
+    #    the officer's queue: the claim the presenter created a minute earlier.
+    #    Every other customer keeps a history, which is what makes the queue and the risk
+    #    head's percentages look like a portfolio rather than one person's file.
     showcase = data_dir / "showcase"
     meera_pdf = (showcase / "01_genuine_bill.pdf").read_bytes()
     mf = read_bill(meera_pdf)[1]
     store.add_bill(mf.bill_no, mf.issuer_id, mf.issuer_name, meera[0], mf.patient, mf.bill_date,
                    mf.total_paise, mf.ticket, True, meera_pdf, "2026-03-03 11:20")
-    submit_claim(store, verifier, meera[0], meera_pdf, "Sahyog_final_bill.pdf", mf.bill_no,
-                 truth="genuine", submitted_at="2026-03-05 09:40")
-    #    b) an Arogya bill: issued and published, but she first sent a blurred photo.
+    #    a second bill she holds: an Arogya bill, issued and published, never claimed. It is
+    #    the "original" she can send if a claim of hers is ever sent back for a clearer copy.
     ab = _bill_for(rng, "IN-HOSP-AROGYA-NSK-0233", meera, 3301, 8)
-    ab_pdf = issue_bill(store, registry, verifier, ab, meera[0], "Arogya billing", "2026-03-08 16:05")
-    submit_claim(store, verifier, meera[0], render_scan(ab, joined=True, seed=3), "photo_of_bill.pdf",
-                 ab.bill_no, truth="genuine", submitted_at="2026-03-09 20:15")
-    #    c) a Shanti bill (not joined): referred to a person, still open.
-    sb = _bill_for(rng, "IN-HOSP-SHANTI-STR-0419", meera, 1450, 11)
-    submit_claim(store, verifier, meera[0], render_genuine(sb, joined=False), "Shanti_bill.pdf",
-                 truth="genuine", submitted_at="2026-03-12 10:05")
+    issue_bill(store, registry, verifier, ab, meera[0], "Arogya billing", "2026-03-08 16:05")
 
     # 3. Everyone else: joined hospitals issue and publish; customers claim.
     serial = 5000

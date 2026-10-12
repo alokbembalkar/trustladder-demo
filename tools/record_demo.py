@@ -264,6 +264,14 @@ def main() -> None:
         still(pg, "officer_claim")
         pg.get_by_role("button", name="Reject as fraud").first.click()
         settle(pg)
+        # the officer must be able to SEE what they just did
+        expect_text(pg, "Rejected and referred to investigation",
+                    "step 3: the decision is confirmed back on the queue")
+        if "Decided recently" not in pg.inner_text("body"):
+            raise SystemExit("TC-30 FAILED: step 3: no way to look back at decided claims")
+        print("TC-30 pass: step 3: decided claims can be looked at again")
+        pg.wait_for_timeout(READ)
+        still(pg, "officer_decided")
 
         # 4. Risk head
         next_step()

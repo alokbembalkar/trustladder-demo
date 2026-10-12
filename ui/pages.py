@@ -233,21 +233,28 @@ def _claim_detail(ctx: Ctx, claim_id: str) -> None:
             if c["officer_decision"]:
                 st.info(f"Decided: {c['officer_decision']} ({c['decided_by']}, {c['decided_at']}).")
             return
+        def record(action: str) -> None:
+            """Decide, then hand the officer back to the queue with confirmation.
+
+            The claim leaves the queue the moment it is decided, so without this the
+            officer saw it disappear and had no way to tell what had been recorded.
+            """
+            ctx.store.decide(claim_id, action, ctx.user["name"])
+            st.session_state.officer_done = claim_id
+            st.session_state.pop("officer_open", None)
+            st.rerun()
+
         st.write("")
         b1, b2 = st.columns(2)
         if b1.button("Approve payment", key=f"dec_release_{claim_id}", type="primary", width="stretch"):
-            ctx.store.decide(claim_id, "release", ctx.user["name"])
-            st.rerun()
+            record("release")
         if b2.button("Reject as fraud", key=f"dec_reject_{claim_id}", width="stretch"):
-            ctx.store.decide(claim_id, "reject", ctx.user["name"])
-            st.rerun()
+            record("reject")
         with st.expander("Other options"):
             if st.button("Ask the hospital to confirm", key=f"dec_ask_issuer_{claim_id}"):
-                ctx.store.decide(claim_id, "ask_issuer", ctx.user["name"])
-                st.rerun()
+                record("ask_issuer")
             if st.button("Ask the customer for a clearer copy", key=f"dec_ask_customer_{claim_id}"):
-                ctx.store.decide(claim_id, "ask_customer", ctx.user["name"])
-                st.rerun()
+                record("ask_customer")
 
     # The officer is the one person asked to call something fraud, so they see what
     # was found without having to turn anything on.
@@ -283,6 +290,14 @@ def officer_inbox(ctx: Ctx) -> None:
           (str(m["auto_paid"]), "paid automatically on proof")])
     st.write("")
 
+    just_done = st.session_state.pop("officer_done", None)
+    if just_done:
+        d = ctx.store.claim(just_done)
+        st.success(f"**{d['officer_decision']}.** Claim {just_done}, {d['customer_name']} · "
+                   f"{d['issuer_name']}. The machine verdict was {d['verdict']}; the decision is yours "
+                   f"and both are in the audit trail. It has left your queue and is listed under "
+                   f"**Decided recently** below.")
+
     chosen = st.session_state.get("officer_open")
     if chosen and any(c["claim_id"] == chosen for c in open_claims):
         if st.button("◂ Back to the queue", key="inbox_back"):
@@ -313,6 +328,31 @@ def officer_inbox(ctx: Ctx) -> None:
             st.rerun()
     st.caption(f"{len(open_claims)} claims are waiting. Everything else was settled without a person: "
                f"{m['auto_paid']} paid on the issuer's proof.")
+    _decided_recently(ctx)
+
+
+def _decided_recently(ctx: Ctx) -> None:
+    """What this officer has already settled. A decision that vanishes cannot be checked."""
+    done = ctx.store.decided()
+    if not done:
+        return
+    st.write("")
+    with st.expander(f"Decided recently ({len(done)})"):
+        head = st.columns([2.1, 2.2, 2.6, 1.4, 1.6, 2.6])
+        for col, label in zip(head, ("Claim", "Customer", "Hospital", "Amount",
+                                     "Machine verdict", "Your decision")):
+            col.markdown(f'<span class="tl-muted"><b>{label}</b></span>', unsafe_allow_html=True)
+        for c in done:
+            row = st.columns([2.1, 2.2, 2.6, 1.4, 1.6, 2.6])
+            row[0].write(c["claim_id"])
+            row[1].write(c["customer_name"])
+            row[2].write(c["issuer_name"])
+            row[3].write(inr(c["total_paise"]) if c["total_paise"] else "not readable")
+            row[4].write(c["verdict"])
+            row[5].write(f"{c['officer_decision']} · {c['decided_at']}")
+        st.caption("The machine's verdict and the person's decision are kept side by side, and the "
+                   "auditor sees the same pair. Where they differ, the person's decision stands and "
+                   "the disagreement is on the record.")
 
 
 # ==========================================================================
