@@ -104,20 +104,22 @@ STEPS = [
     # with the same button, and splitting them into separate steps made it look as
     # though the product wanted the bill in two places.
     ("hospital", "Issue a bill", "Hospital issues",
-     "Press **Issue bill and publish**, then press **Download the bill (PDF)**. Keep that file.",
-     "The hospital prints a random ticket on the bill and sends the registry two scrambled codes. "
-     "No patient data leaves the hospital."),
+     "Press **Issue bill and discharge summary, and publish**, then download **both** PDFs. Keep them.",
+     "At discharge the hospital issues the bill and the discharge summary. TrustLadder prints a random "
+     "ticket on each and sends the registry two scrambled codes per document. No patient data leaves "
+     "the hospital."),
     ("customer", "Submit a claim", "Customer uploads",
-     "**First**, upload the bill you just downloaded and press **Submit claim**. "
-     "**Then** press **Download sample bills**, upload the photo **08_marathi_bill_photo.jpg**, "
+     "**First**, attach the bill **and** the discharge summary you just downloaded, together, and press "
+     "**Submit claim**. "
+     "**Then** press **Download sample bills**, attach the photo **08_marathi_bill_photo.jpg**, "
      "check what the vision model read, tick the box and submit. "
-     "**Last**, open **Demo toolkit** in the sidebar, press **Download the edited copy**, and upload "
+     "**Last**, open **Demo toolkit** in the sidebar, press **Download the edited copy**, and attach "
      "that.",
-     "One screen takes every bill, and the customer never says which kind it is. The first is a PDF, "
-     "read exactly and confirmed by the hospital's own record, so it is paid at once with no officer "
-     "involved. The second is a photograph of a bill printed in Marathi: a vision model reads it in "
-     "Marathi, shows the customer what it read, and the hospital's record confirms it, so a photo "
-     "from a phone is paid on proof. The third really was edited, and it is held."),
+     "One screen takes the whole claim packet, and the customer never says which kind of file it is. "
+     "The first packet is a bill and a discharge summary, read exactly; the hospital's record confirms "
+     "both and the dates agree, so it is paid at once with no officer involved. The second is a "
+     "photograph of a bill printed in Marathi: a vision model reads it in Marathi, shows the customer "
+     "what it read, and the hospital's record confirms it. The third really was edited, and it is held."),
     ("officer", "Claims inbox", "Officer decides",
      "Open the top claim (the edited bill) and press **Reject as fraud**.",
      "Only claims that could not be proven reach a person, and they arrive with the reason and the "

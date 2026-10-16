@@ -80,6 +80,17 @@ def still(pg: Page, name: str) -> None:
     pg.screenshot(path=str(STILLS / f"{name}.png"))
 
 
+def clear_uploads(pg: Page) -> None:
+    """Remove every file from the customer's packet box, so the next upload is a new packet."""
+    for _ in range(4):
+        x = pg.locator("[data-testid='stMain'] [data-testid='stFileChipDeleteBtn']").first
+        if not x.count():
+            break
+        x.click()
+        pg.wait_for_timeout(400)
+    settle(pg)
+
+
 def settle(pg: Page) -> None:
     """Wait until Streamlit has STARTED and then FINISHED re-running the page.
 
@@ -185,26 +196,33 @@ def main() -> None:
             settle(pg)
 
         # 1. The hospital issues a bill and hands over the two files the demo needs
-        expect_text(pg, "Issue bill and publish", "step 1: hospital")
+        expect_text(pg, "Issue bill and discharge summary, and publish", "step 1: hospital")
         pg.wait_for_timeout(READ)
-        pg.get_by_role("button", name="Issue bill and publish").click()
+        pg.get_by_role("button", name="Issue bill and discharge summary, and publish").click()
         settle(pg)
-        expect_text(pg, "Ticket printed on the bill", "bill issued and published")
+        expect_text(pg, "with discharge summary", "bill and discharge summary issued and published")
         with pg.expect_download() as d1:
             pg.get_by_role("button", name="Download the bill (PDF)").click()
         genuine = Path(BUILD / "demo_files" / d1.value.suggested_filename)
         genuine.parent.mkdir(parents=True, exist_ok=True)
         d1.value.save_as(str(genuine))
         print(f"TC-30 pass: downloaded the genuine bill {genuine.name}")
+        with pg.expect_download() as d1b:
+            pg.get_by_role("button", name="Download the discharge summary (PDF)").click()
+        summary = genuine.parent / d1b.value.suggested_filename
+        d1b.value.save_as(str(summary))
+        print(f"TC-30 pass: downloaded the discharge summary {summary.name}")
         pg.wait_for_timeout(READ)
         still(pg, "hospital_issue")
 
         # 2. The customer uploads that bill
         next_step()
-        expect_text(pg, "Your bill (PDF, or a photo", "step 2: customer upload screen takes a PDF or a photo")
-        # scope to the main area: the presenter's sidebar toolkit also has an upload box
-        pg.locator("[data-testid='stMain'] input[type='file']").first.set_input_files(str(genuine))
+        expect_text(pg, "Your claim documents", "step 2: customer upload screen takes the claim packet")
+        # scope to the main area: the presenter's sidebar toolkit also has an upload box.
+        # The first packet is the bill AND the discharge summary, attached together.
+        pg.locator("[data-testid='stMain'] input[type='file']").first.set_input_files([str(genuine), str(summary)])
         settle(pg)
+        expect_text(pg, "Discharge summary", "step 2: the packet recognised the discharge summary")
         # The bill must be on screen, and ABOVE the Submit button, before anything is sent.
         if "Check this is the right bill" not in pg.inner_text("body"):
             raise SystemExit("TC-30 FAILED: the customer cannot see the bill before submitting")
@@ -222,7 +240,8 @@ def main() -> None:
         print("TC-30 pass: step 2: the customer sees the bill above the Submit button")
         pg.get_by_role("button", name="Submit claim").click()
         settle(pg)
-        expect_claim_status(pg, "Paid", "step 2: the customer's own bill, paid on proof")
+        expect_claim_status(pg, "Paid", "step 2: the customer's own packet (bill + summary), paid on proof")
+        clear_uploads(pg)          # a new packet starts clean
         pg.wait_for_timeout(READ)
         still(pg, "customer_upload")
 
@@ -293,6 +312,7 @@ def main() -> None:
         tampered = genuine.parent / d2.value.suggested_filename
         d2.value.save_as(str(tampered))
         print(f"TC-30 pass: the forger's toolkit produced {tampered.name}")
+        clear_uploads(pg)
         pg.locator("[data-testid='stMain'] input[type='file']").first.set_input_files(str(tampered))
         settle(pg)
         pg.get_by_role("button", name="Submit claim").click()
@@ -317,6 +337,7 @@ def main() -> None:
         expect_text(pg, "What was found", "step 3: the officer can see WHY, without any switch")
         expect_text(pg, "Read from the PDF's text layer", "step 3: how the bill was read is stated")
         expect_text(pg, "How the evidence was gathered", "step 3: the agent's trace is on screen")
+        expect_text(pg, "discharge summary", "step 3: the packet's second document is accounted for")
         expect_text(pg, "Asked the issuer's registry", "step 3: the trace names the checks in words")
         if "Reason written by the language model" not in pg.inner_text("body") and \
            "Reason assembled from fixed sentences" not in pg.inner_text("body"):

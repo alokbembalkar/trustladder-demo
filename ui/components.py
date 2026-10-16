@@ -132,6 +132,42 @@ def agent_panel(r: LadderResult, pending: bool = False) -> None:
     st.markdown(rows, unsafe_allow_html=True)
 
 
+def packet_panel(documents: list[dict]) -> None:
+    """The claim packet's other document, the discharge summary: what it says, what the
+    hospital's record says about it, and how it was read."""
+    if not documents:
+        st.markdown('<div class="tl-who">No discharge summary was attached to this claim.</div>',
+                    unsafe_allow_html=True)
+        return
+    from trustladder.packet import SummaryResult, summary_line
+    for d in documents:
+        j = SummaryResult.from_json(json.loads(d["result_json"]))
+        st.markdown("**The discharge summary in this packet**")
+        col_doc, col_txt = st.columns([2, 3], gap="large")
+        with col_doc:
+            st.image(preview_any(d["data"], d["file_name"]), width="stretch")
+        with col_txt:
+            tone = REGISTRY_COLOUR.get(j.registry_answer.value, "#475569")
+            st.markdown(chip(f"Registry: {j.registry_answer.value}", tone), unsafe_allow_html=True)
+            st.markdown(f'<div class="tl-reason" style="font-size:1.0rem">{summary_line(j)}</div>',
+                        unsafe_allow_html=True)
+            st.caption(j.registry_note)
+            rep = j.read_report or {}
+            if rep.get("source") == "vision model":
+                model = j.models_used.get("reader") or rep.get("model") or "the vision model"
+                conf = ("the customer confirmed the details" if rep.get("customer_confirmed")
+                        else "not confirmed by the customer")
+                st.markdown(f'<div class="tl-who"><span class="ai">AI</span> Read from a scan by the vision '
+                            f'model <b>{model}</b>' + (f", printed in <b>{rep['language']}</b>" if rep.get("language") else "")
+                            + f"; {conf}. "
+                            + ("Corroborated." if rep.get("corroborated") else
+                               "Not corroborated: a contradiction by the hospital is shown, not counted.")
+                            + '</div>', unsafe_allow_html=True)
+            else:
+                st.markdown('<div class="tl-who">Read from the PDF\'s text layer, exactly.</div>',
+                            unsafe_allow_html=True)
+
+
 def model_registry_table() -> None:
     """Every model in this build, published beside the rule it feeds."""
     rows = model_registry.models()

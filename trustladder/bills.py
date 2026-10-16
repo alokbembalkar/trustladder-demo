@@ -305,6 +305,63 @@ def render_scan(bill: BillFields, *, joined: bool, seed: int = 7) -> bytes:
                          modified=issued_at + _dt.timedelta(days=2))
 
 
+def render_discharge_summary(s: "DischargeFields", *, joined: bool,
+                             issued_at: _dt.datetime | None = None) -> bytes:
+    """A discharge summary as the hospital's system prints it.
+
+    The second document of a hospitalisation claim. Laid out the way such summaries
+    are in practice: identity block, dates, diagnosis, the operation if any, the
+    course in hospital, advice on discharge, the consultant. The ticket sits with the
+    identity block, as on the bill. Everything clinical is invented and generic.
+    """
+    from .models import DischargeFields  # noqa: F401  (type only)
+    width, height = A4
+    left, right = 20 * mm, width - 20 * mm
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4, invariant=1)
+    y = height - 25 * mm
+    c.setFont(BOLD_FONT, 16); c.drawString(left, y, s.issuer_name); y -= 6 * mm
+    c.setFont(BODY_FONT, 9); c.drawString(left, y, f"Issuer ID: {s.issuer_id}"); y -= 12 * mm
+    c.setFont(BOLD_FONT, 13); c.drawString(left, y, "DISCHARGE SUMMARY"); y -= 9 * mm
+    c.setFont(BODY_FONT, 10)
+    for label, value in (("Summary No", s.summary_no), ("UHID", s.uhid), ("Patient", s.patient),
+                         ("Date of Admission", display_date(s.admitted)),
+                         ("Date of Discharge", display_date(s.discharged)),
+                         ("Consultant", s.consultant)):
+        c.drawString(left, y, f"{label}: {value}"); y -= 6 * mm
+    if joined and s.ticket:
+        c.setFont(BOLD_FONT, 10); c.drawString(left, y, f"Ticket: {s.ticket}")
+        c.setFont(BODY_FONT, 7.5)
+        c.drawString(left, y - 4 * mm, "This summary can be confirmed with the issuer through the TrustLadder registry.")
+        y -= 10 * mm
+    y -= 4 * mm
+    c.line(left, y, right, y); y -= 7 * mm
+    for label, value in (("Diagnosis", s.diagnosis),
+                         ("Operation", s.procedure or "None"),
+                         ("Course in hospital", "Uneventful. Vitals stable throughout."),
+                         ("Condition on discharge", "Satisfactory. Mobilising independently; tolerating oral diet."),
+                         ("Advice on discharge", "Medication as prescribed. Review in the outpatient department in one week. "
+                                                 "Report to casualty in case of fever, severe pain or bleeding.")):
+        c.setFont(BOLD_FONT, 10); c.drawString(left, y, f"{label}:"); y -= 5.5 * mm
+        c.setFont(BODY_FONT, 10)
+        for line in _wrap(value, 95):
+            c.drawString(left + 4 * mm, y, line); y -= 5 * mm
+        y -= 2 * mm
+    c.setFont(BODY_FONT, 7.5)
+    c.drawString(left, 15 * mm, "Synthetic document generated for the IIM-V Capstone demo (Group 7). "
+                                "Not a real discharge summary; no real patient or doctor.")
+    c.showPage(); c.save()
+    issued_at = issued_at or _dt.datetime.fromisoformat(s.discharged + "T11:00:00")
+    software = billing_software(s.issuer_name)
+    return _set_metadata(buf.getvalue(), creator=software, producer=software,
+                         created=issued_at, modified=issued_at)
+
+
+def _wrap(text: str, width: int) -> list[str]:
+    import textwrap
+    return textwrap.wrap(text, width) or [""]
+
+
 def photo_of(pdf_bytes: bytes, *, seed: int = 5, quality: int = 72) -> bytes:
     """A phone photograph of a printed bill, as a JPEG.
 

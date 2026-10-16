@@ -42,14 +42,15 @@ import re
 from dataclasses import dataclass, field
 
 from . import llm, ocr
-from .models import BillFields, LineItem, ReadStatus
-from .reader import (canonical_bill_no, canonical_ticket, parse_amount_paise, parse_date_iso,
-                     pdf_text, read_bill)
+from .models import KIND_BILL, KIND_SUMMARY, BillFields, DischargeFields, LineItem, ReadStatus
+from .reader import (canonical_bill_no, canonical_ticket, is_summary_text, parse_amount_paise,
+                     parse_date_iso, pdf_text, read_bill, read_summary)
 
 IMAGE_TYPES = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png"}
 
 # What the lookup needs. The confidence gate applies to exactly these.
 LOOKUP_FIELDS = ("issuer_id", "bill_no", "bill_date", "patient", "total")
+SUMMARY_LOOKUP_FIELDS = ("issuer_id", "summary_no", "patient", "admitted", "discharged")
 CONFIDENCE_FLOOR = 0.70
 
 _TICKET_SHAPE = re.compile(r"^[A-Z]{2}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$")
@@ -78,6 +79,9 @@ class Reading:
     partial: dict = field(default_factory=dict)
     """What was read when the reading was NOT good enough to use: the form the customer
     completes is pre-filled from this, blanks where the reader could not see."""
+    kind: str = KIND_BILL
+    """Which document this is: a bill or a discharge summary. Decided by the text layer
+    for a PDF and by the vision model for a picture."""
 
     @property
     def from_picture(self) -> bool:
@@ -112,8 +116,12 @@ def read_any(data: bytes, file_name: str) -> Reading:
     """Read a PDF from its text layer when it has one; otherwise read it as a picture."""
     mime = mime_of(file_name)
     if mime is None:
+        text = pdf_text(data)
+        if is_summary_text(text):
+            status, fields, note = read_summary(data)
+            return Reading(status, fields, note, source="text layer", kind=KIND_SUMMARY)
         status, fields, note = read_bill(data)
-        if status is ReadStatus.OK or len(pdf_text(data).strip()) >= 20:
+        if status is ReadStatus.OK or len(text.strip()) >= 20:
             # A real text layer, read exactly (or honestly incomplete).
             return Reading(status, fields, note, source="text layer")
         # A PDF that is only a picture: render the page and read it as one.
@@ -144,20 +152,23 @@ def first_page_png(pdf_bytes: bytes, scale: float = 1.6) -> bytes | None:
 # --------------------------------------------------------------------------
 
 _PROMPT = (
-    "You are reading a photograph or scan of a hospital bill for an insurance claim. The bill "
-    "may be printed in any language; read it as printed and do not translate names. Return ONLY "
-    "a JSON object with these keys:\n"
+    "You are reading a photograph or scan of a hospital document for an insurance claim: either a "
+    "hospital BILL or a DISCHARGE SUMMARY. The document may be printed in any language; read it as "
+    "printed and do not translate names. Return ONLY a JSON object with these keys:\n"
+    "  document_type: \"bill\" or \"discharge summary\"\n"
     "  language_seen: the language of the printed text, in English (e.g. English, Marathi, Hindi)\n"
     "  issuer_name: the hospital's name exactly as printed\n"
-    "  issuer_id: the issuer ID code printed on the bill (letters, digits and hyphens)\n"
-    "  bill_no: the bill number exactly as printed\n"
-    "  bill_date: the bill date as YYYY-MM-DD\n"
+    "  issuer_id: the issuer ID code printed on the document (letters, digits and hyphens)\n"
     "  patient: the patient's name exactly as printed\n"
-    "  ticket: the TrustLadder ticket printed on the bill, character by character, or \"\" if none\n"
-    "  line_items: a list of {description, amount} for each charge, amount as a number\n"
-    "  total: the grand total as a number\n"
-    "  confidence: an object with a number from 0 to 1 for each of issuer_id, bill_no, "
-    "bill_date, patient, ticket, total: 1 means every character is clearly legible\n"
+    "  ticket: the TrustLadder ticket printed on the document, character by character, or \"\" if none\n"
+    "  For a bill: bill_no (exactly as printed), bill_date (YYYY-MM-DD), line_items (a list of "
+    "{description, amount} with amount as a number), total (the grand total as a number)\n"
+    "  For a discharge summary: summary_no (the summary or document number), uhid, admitted "
+    "(date of admission, YYYY-MM-DD), discharged (date of discharge, YYYY-MM-DD), diagnosis, "
+    "procedure (the operation performed, or \"\" if none), consultant\n"
+    "  confidence: an object with a number from 0 to 1 for each of issuer_id, patient, ticket and, "
+    "for a bill, bill_no, bill_date, total; for a summary, summary_no, admitted, discharged: 1 means "
+    "every character is clearly legible\n"
     "  notes: anything a claims officer should know about the picture, or null\n"
     "Transcribe codes exactly. If a value is unreadable, use \"\" and a low confidence."
 )
@@ -210,9 +221,11 @@ def _without_model(image: bytes, unavailable: bool = False) -> Reading:
 
 
 def _to_reading(raw: dict, model: str) -> Reading:
-    """Normalise the model's JSON into BillFields, applying the confidence gate."""
+    """Normalise the model's JSON into BillFields or DischargeFields, with the confidence gate."""
     conf = {k: _num(v) for k, v in (raw.get("confidence") or {}).items()}
     language = str(raw.get("language_seen") or "").strip()
+    if "summary" in str(raw.get("document_type") or "").lower():
+        return _to_summary_reading(raw, model, conf, language)
 
     issuer_id = str(raw.get("issuer_id") or "").strip().upper()
     bill_no = canonical_bill_no(str(raw.get("bill_no") or ""))
@@ -258,9 +271,54 @@ def _to_reading(raw: dict, model: str) -> Reading:
                    source="vision model", model=model, confidence=conf, language=language)
 
 
+def _to_summary_reading(raw: dict, model: str, conf: dict, language: str) -> Reading:
+    """The discharge-summary half of `_to_reading`."""
+    issuer_id = str(raw.get("issuer_id") or "").strip().upper()
+    summary_no = canonical_bill_no(str(raw.get("summary_no") or ""))
+    patient = " ".join(str(raw.get("patient") or "").split())
+    admitted = parse_date_iso(str(raw.get("admitted") or "")) or _iso_or_none(raw.get("admitted"))
+    discharged = parse_date_iso(str(raw.get("discharged") or "")) or _iso_or_none(raw.get("discharged"))
+    ticket = canonical_ticket_display(str(raw.get("ticket") or ""))
+    values = {"issuer_id": issuer_id, "summary_no": summary_no, "patient": patient,
+              "admitted": admitted, "discharged": discharged}
+    missing = [k for k, v in values.items() if not v]
+    unsure = [k for k in SUMMARY_LOOKUP_FIELDS if k not in missing and conf.get(k, 1.0) < CONFIDENCE_FLOOR]
+    if ticket and (conf.get("ticket", 1.0) < CONFIDENCE_FLOOR or not _TICKET_SHAPE.match(ticket)):
+        unsure.append("ticket")
+    extras = {"uhid": str(raw.get("uhid") or "").strip(), "diagnosis": " ".join(str(raw.get("diagnosis") or "").split()),
+              "procedure": " ".join(str(raw.get("procedure") or "").split()),
+              "consultant": " ".join(str(raw.get("consultant") or "").split()),
+              "issuer_name": " ".join(str(raw.get("issuer_name") or "").split())}
+    if missing or unsure:
+        labels = {"issuer_id": "issuer", "summary_no": "summary number", "patient": "patient name",
+                  "admitted": "admission date", "discharged": "discharge date", "ticket": "ticket"}
+        parts = []
+        if missing:
+            parts.append("could not find " + ", ".join(labels[m] for m in missing))
+        if unsure:
+            parts.append("not confident of " + ", ".join(labels[u] for u in unsure))
+        return Reading(ReadStatus.COULD_NOT_READ, None,
+                       "The vision model read the picture but " + "; ".join(parts) + ". A reading "
+                       "that is not certain is never compared with the registry: please check and "
+                       "complete the details.",
+                       source="vision model", model=model, confidence=conf, language=language,
+                       partial={**values, "ticket": ticket, **extras}, kind=KIND_SUMMARY)
+    fields = DischargeFields(issuer_id, extras["issuer_name"], summary_no, extras["uhid"], patient,
+                             admitted, discharged, extras["diagnosis"], extras["procedure"],
+                             extras["consultant"], ticket)
+    return Reading(ReadStatus.OK, fields,
+                   f"Read from a picture by the vision model ({language or 'language not stated'}). "
+                   "Every field needed for the lookup was read with confidence.",
+                   source="vision model", model=model, confidence=conf, language=language,
+                   kind=KIND_SUMMARY)
+
+
 def _second_opinion(reading: Reading, image: bytes) -> None:
     """Let the local deep OCR read the same picture and say whether the two agree."""
     if not ocr.available():
+        return
+    if reading.kind == KIND_SUMMARY:
+        # The OCR reader knows the bill layout only. No opinion is honest; a wrong one is not.
         return
     other = ocr.read_fields(image)
     reading.second_reader = "deep OCR"
@@ -299,6 +357,16 @@ def _iso_or_none(v) -> str | None:
 def form_values(reading: Reading) -> dict:
     """What the confirmation form shows: the fields read, or the partial read, or blanks."""
     f = reading.fields
+    if reading.kind == KIND_SUMMARY:
+        if f is not None:
+            return {"issuer_id": f.issuer_id, "summary_no": f.summary_no, "patient": f.patient,
+                    "admitted": f.admitted, "discharged": f.discharged, "ticket": f.ticket,
+                    "uhid": f.uhid, "diagnosis": f.diagnosis, "procedure": f.procedure,
+                    "consultant": f.consultant, "issuer_name": f.issuer_name}
+        p = reading.partial or {}
+        return {k: p.get(k) or "" for k in ("issuer_id", "summary_no", "patient", "admitted", "discharged",
+                                             "ticket", "uhid", "diagnosis", "procedure", "consultant",
+                                             "issuer_name")}
     if f is not None:
         return {"issuer_id": f.issuer_id, "bill_no": f.bill_no, "bill_date": f.bill_date or "",
                 "patient": f.patient, "total": f.total_paise, "ticket": f.ticket,
@@ -308,14 +376,59 @@ def form_values(reading: Reading) -> dict:
                                          "issuer_name")} | {"total": p.get("total") or 0}
 
 
+def apply_summary_corrections(reading: Reading, corrected: dict) -> Reading:
+    """`apply_corrections` for a discharge summary: the dates and the identity are the lookup."""
+    before = form_values(reading)
+    after = dict(before)
+    for k in ("issuer_id", "summary_no", "patient", "admitted", "discharged", "ticket", "uhid",
+              "diagnosis", "procedure", "consultant"):
+        if k in corrected:
+            v = str(corrected[k])
+            if k in ("admitted", "discharged"):
+                v = parse_date_iso(v) or _iso_or_none(v) or ""
+            elif k == "issuer_id":
+                v = v.strip().upper()
+            elif k == "summary_no":
+                v = canonical_bill_no(v)
+            elif k == "ticket":
+                v = canonical_ticket_display(v)
+            else:
+                v = " ".join(v.split())
+            after[k] = v
+    changed = sum(before[k] != after[k] for k in ("issuer_id", "summary_no", "patient", "admitted",
+                                                   "discharged", "ticket"))
+    complete = all(after[k] for k in SUMMARY_LOOKUP_FIELDS)
+    fields = DischargeFields(after["issuer_id"], after["issuer_name"], after["summary_no"], after["uhid"],
+                             after["patient"], after["admitted"], after["discharged"], after["diagnosis"],
+                             after["procedure"], after["consultant"], after["ticket"]) if complete else None
+    out = Reading(**{**reading.__dict__, "fields": fields})
+    out.customer_confirmed = True
+    out.corrections = changed
+    if complete:
+        out.status = ReadStatus.OK
+        if reading.status is not ReadStatus.OK:
+            out.note = ("Read from a picture, completed and confirmed by the customer "
+                        f"({changed} field{'s' if changed != 1 else ''} typed or corrected).")
+    else:
+        out.status = ReadStatus.COULD_NOT_READ
+        out.note = "The details are still incomplete, so the summary was not compared with the registry."
+    if changed:
+        out.agree = False if out.second_reader else None
+    return out
+
+
 def apply_corrections(reading: Reading, corrected: dict) -> Reading:
     """The customer's confirmed values replace the model's, and the changes are counted.
+
+    Dispatches to `apply_summary_corrections` for a discharge summary.
 
     `corrected` holds the same keys as the form: issuer_id, bill_no, bill_date, patient,
     total (rupees as text), ticket. A changed value is a correction; the count is what
     the risk head sees as the reader's error rate. A reading that was incomplete becomes
     usable once every lookup field is filled in.
     """
+    if reading.kind == KIND_SUMMARY:
+        return apply_summary_corrections(reading, corrected)
     before = form_values(reading)
     after = {
         "issuer_id": str(corrected.get("issuer_id", before["issuer_id"])).strip().upper(),

@@ -29,7 +29,7 @@ import unicodedata
 
 from pypdf import PdfReader
 
-from .models import BillFields, LineItem, ReadStatus
+from .models import BillFields, DischargeFields, LineItem, ReadStatus
 
 # --------------------------------------------------------------------------
 # Normalisation: the one standard form
@@ -73,20 +73,84 @@ def parse_date_iso(text: str) -> str | None:
     return None
 
 
-def canonical_record(bill: BillFields) -> str:
+def canonical_record(doc) -> str:
     """The exact string whose code the issuer publishes as the 'value'.
 
-    ticket | bill number | date | patient | total in paise, each in standard form.
-    The line items are deliberately not included: the total is the field that
+    For a bill: ticket | bill number | date | patient | total in paise, each in standard
+    form. The line items are deliberately not included: the total is the field that
     matters for payment, and fewer fields means fewer chances to misread.
+
+    For a discharge summary: ticket | summary number | discharge date | patient |
+    admission date. The clinical text is not committed to: the dates and the identity
+    are what a claim is checked against, and they are the fields a reader gets right.
     """
+    if isinstance(doc, DischargeFields):
+        return "|".join([
+            canonical_ticket(doc.ticket),
+            canonical_bill_no(doc.summary_no),
+            doc.discharged,
+            canonical_name(doc.patient),
+            doc.admitted,
+        ])
     return "|".join([
-        canonical_ticket(bill.ticket),
-        canonical_bill_no(bill.bill_no),
-        bill.bill_date,
-        canonical_name(bill.patient),
-        str(int(bill.total_paise)),
+        canonical_ticket(doc.ticket),
+        canonical_bill_no(doc.bill_no),
+        doc.bill_date,
+        canonical_name(doc.patient),
+        str(int(doc.total_paise)),
     ])
+
+
+# --------------------------------------------------------------------------
+# Reading a discharge summary PDF
+# --------------------------------------------------------------------------
+
+_SUMMARY_PATTERNS = {
+    "issuer_id": re.compile(r"Issuer ID:\s*(\S+)"),
+    "summary_no": re.compile(r"Summary No:\s*(\S+)"),
+    "uhid": re.compile(r"UHID:\s*(\S+)"),
+    "patient": re.compile(r"Patient:\s*(.+?)\s*$", re.M),
+    "admitted": re.compile(r"Date of Admission:\s*([0-9A-Za-z\-/ .]+?)\s*$", re.M),
+    "discharged": re.compile(r"Date of Discharge:\s*([0-9A-Za-z\-/ .]+?)\s*$", re.M),
+    "diagnosis": re.compile(r"Diagnosis:\s*(.+?)\s*$", re.M),
+    "procedure": re.compile(r"Operation:\s*(.+?)\s*$", re.M),
+    "consultant": re.compile(r"Consultant:\s*(.+?)\s*$", re.M),
+    "ticket": re.compile(r"Ticket:\s*([A-Z0-9\-]+)"),
+}
+
+
+def is_summary_text(text: str) -> bool:
+    """Does this text layer belong to a discharge summary rather than a bill?"""
+    return "DISCHARGE SUMMARY" in text.upper() and "Summary No:" in text
+
+
+def read_summary(pdf_bytes: bytes) -> tuple[ReadStatus, "DischargeFields | None", str]:
+    """Read a discharge summary's fields from its text layer, like `read_bill`."""
+    text = pdf_text(pdf_bytes)
+    if len(text.strip()) < 20:
+        return (ReadStatus.COULD_NOT_READ, None,
+                "The document has no readable text (it looks like a photo or scan).")
+    found = {k: (p.search(text).group(1).strip() if p.search(text) else "")
+             for k, p in _SUMMARY_PATTERNS.items()}
+    admitted = parse_date_iso(found["admitted"]) if found["admitted"] else None
+    discharged = parse_date_iso(found["discharged"]) if found["discharged"] else None
+    missing = [k for k in ("issuer_id", "summary_no", "patient") if not found[k]]
+    if admitted is None:
+        missing.append("admission date")
+    if discharged is None:
+        missing.append("discharge date")
+    if missing:
+        return (ReadStatus.COULD_NOT_READ, None,
+                "Could not read with confidence: " + ", ".join(missing) + ".")
+    procedure = found["procedure"]
+    if procedure.lower() in ("none", "nil", "no operation", "-"):
+        procedure = ""
+    fields = DischargeFields(
+        issuer_id=found["issuer_id"], issuer_name=text.strip().splitlines()[0].strip(),
+        summary_no=found["summary_no"], uhid=found["uhid"], patient=found["patient"],
+        admitted=admitted, discharged=discharged, diagnosis=found["diagnosis"],
+        procedure=procedure, consultant=found["consultant"], ticket=found["ticket"])
+    return ReadStatus.OK, fields, "All fields needed for the lookup were read."
 
 
 # --------------------------------------------------------------------------

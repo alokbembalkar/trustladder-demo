@@ -120,14 +120,16 @@ class Publisher:
         """The random reference that gets printed on the bill."""
         return crypto.new_ticket(self.ticket_prefix)
 
-    def entry_for(self, bill: BillFields) -> list[str]:
-        """Return the [key, value] pair for one bill: two codes, nothing else."""
+    def entry_for(self, bill) -> list[str]:
+        """Return the [key, value] pair for one document (a bill or a discharge
+        summary): two codes, nothing else."""
         key = crypto.code(canonical_ticket(bill.ticket), self.salt)
         value = crypto.code(canonical_record(bill), self.salt)
         return [key, value]
 
-    def publish(self, bills: list[BillFields], when: _dt.datetime | None = None) -> dict:
-        """Append one signed batch covering `bills` to the issuer's file.
+    def publish(self, bills: list, when: _dt.datetime | None = None) -> dict:
+        """Append one signed batch covering `bills` (bills and/or discharge summaries)
+        to the issuer's file.
 
         Append-only: earlier batches are never re-written or re-signed. A
         correction would be a later entry with the same key, which supersedes the
@@ -208,11 +210,15 @@ class Verifier:
         self._mirror[issuer_id] = (table, note)
         return self._mirror[issuer_id]
 
-    def lookup(self, bill: BillFields) -> tuple[RegistryAnswer, str]:
-        """Answer: is this bill, as read, exactly what the issuer issued?
+    def lookup(self, bill) -> tuple[RegistryAnswer, str]:
+        """Answer: is this document, as read, exactly what the issuer issued?
 
-        Returns the registry answer and a one-sentence note explaining it.
+        `bill` is a BillFields or a DischargeFields: the mechanism is the same, two
+        codes per document, and only the wording of the note changes. Returns the
+        registry answer and a one-sentence note explaining it.
         """
+        from .models import kind_of
+        word = kind_of(bill)
         entry = self.directory.get(bill.issuer_id)
         if entry is None:
             return (RegistryAnswer.NOT_COVERED,
@@ -226,11 +232,11 @@ class Verifier:
             # it has published for, a bill with no ticket cannot be one of theirs.
             if covered:
                 return (RegistryAnswer.NOT_ISSUED,
-                        f"{entry['name']} prints a ticket on every bill it issues, and has published "
-                        f"every bill from {window}. This bill carries no ticket, so it is not one of "
+                        f"{entry['name']} prints a ticket on every {word} it issues, and has published "
+                        f"every one from {window}. This {word} carries no ticket, so it is not one of "
                         "theirs.")
             return (RegistryAnswer.NO_RECORD,
-                    f"{entry['name']} prints a ticket on every bill, but this bill carries none, and "
+                    f"{entry['name']} prints a ticket on every {word}, but this one carries none, and "
                     f"its date falls outside what they have published ({window}).")
 
         table, integrity_note = self._mirror_for(bill.issuer_id)
@@ -240,17 +246,17 @@ class Verifier:
             if covered:
                 # The issuer has published everything it issued for this period and this
                 # ticket is not among it. That is the issuer saying so, not an absence.
-                note = (f"{entry['name']} has published a code for every bill it issued from "
+                note = (f"{entry['name']} has published a code for every {word} it issued from "
                         f"{window}, and ticket {bill.ticket} is not among them. The hospital did "
-                        "not issue this bill.")
+                        f"not issue this {word}.")
                 return RegistryAnswer.NOT_ISSUED, (note + " " + integrity_note).strip()
-            note = (f"{entry['name']} has no record of ticket {bill.ticket}, but this bill is dated "
+            note = (f"{entry['name']} has no record of ticket {bill.ticket}, but this {word} is dated "
                     f"outside the period they have published ({window}), so nothing follows from that.")
             return RegistryAnswer.NO_RECORD, (note + " " + integrity_note).strip()
         value = crypto.code(canonical_record(bill), salt)
         if value == table[key]:
-            note = f"{entry['name']} confirms this ticket and every field on the bill."
+            note = f"{entry['name']} confirms this ticket and every field on the {word}."
             return RegistryAnswer.VERIFIED, (note + " " + integrity_note).strip()
-        note = (f"{entry['name']} issued ticket {bill.ticket}, but the details on this "
-                "copy differ from what was issued.")
+        note = (f"{entry['name']} issued ticket {bill.ticket}, but the details on this copy of the "
+                f"{word} differ from what was issued.")
         return RegistryAnswer.MISMATCH, (note + " " + integrity_note).strip()

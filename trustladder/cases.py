@@ -93,6 +93,21 @@ MARATHI_BILL = BillFields(
     [LineItem("Room charges (semi-private)", 2400000), LineItem("Surgeon fee", 5500000),
      LineItem("Pharmacy and consumables", 1825000), LineItem("Laboratory investigations", 640000)],
     10365000, "SH-WTKU-SZUF-7M7G-ARRC")
+# The discharge summaries in the sample pack. One belongs to bill 1 and is confirmed by the
+# hospital. The other is the mismatched-dates case: a genuine-looking summary from the
+# hospital that has not joined, whose stay does not contain the date of bill 4. Nothing
+# inside either document is wrong on its own; only the packet shows it.
+from .models import DischargeFields  # noqa: E402
+
+SUMMARY_FOR_BILL_1 = DischargeFields(
+    "IN-HOSP-SAHYOG-PUN-0101", "Sahyog Multispeciality Hospital", "SMH/DS/2026/001184", "SMH-UH-204117",
+    SHOWCASE_PATIENT, "2026-02-27", "2026-03-03", "Acute calculous cholecystitis",
+    "Laparoscopic cholecystectomy under general anaesthesia on 28-Feb-2026", "Dr. A. Deshmukh, MS")
+SUMMARY_DATES_MISMATCH = DischargeFields(
+    "IN-HOSP-SHANTI-STR-0419", "Shanti Clinic and Maternity Home", "SCM/DS/2026/000412", "SCM-UH-7731",
+    SHOWCASE_PATIENT, "2026-03-12", "2026-03-15", "Acute gastroenteritis with dehydration",
+    "", "Dr. P. Jagtap, MD")
+
 MARATHI_LABELS = {
     "issuer_name": "सह्योग मल्टीस्पेशालिटी हॉस्पिटल",
     "issuer_id": "जारीकर्ता आयडी", "title": "अंतिम आंतररुग्ण बिल", "bill_no": "बिल क्रमांक",

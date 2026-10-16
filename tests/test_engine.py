@@ -711,3 +711,99 @@ def test_tc28_the_model_registry_names_every_model_and_the_audit_trail_names_the
     c = store.claim(cid2)
     assert c["read_source"] == "vision model" and c["read_corrections"] == 0
     assert store.measures()["picture_claims"] == 1 and store.measures()["readings_corrected"] == 0
+
+
+# ---------------------------------------------------------------- the claim packet (TC-29 .. TC-31)
+
+def test_tc29_the_registry_confirms_a_discharge_summary_by_the_same_mechanism():
+    """TC-29. Steps: read the seeded discharge summary for bill 1 from its PDF; look it up;
+    alter the discharge date and look it up again; look up the summary from the hospital
+    that has not joined.
+    Expected: read as a discharge summary with both dates; Verified; altered -> Mismatch
+    with 'discharge summary' in the note; not-joined hospital -> Not covered."""
+    from dataclasses import replace as _r
+    from trustladder import vision
+    from trustladder.cases import SUMMARY_DATES_MISMATCH, SUMMARY_FOR_BILL_1
+    from trustladder.seed import db_path
+    from trustladder.store import Store
+    store = Store(db_path(DATA_DIR)); verifier = Verifier(RegistryStore(DATA_DIR))
+    reading = vision.read_any(store.summary_pdf(SUMMARY_FOR_BILL_1.summary_no), "ds.pdf")
+    assert reading.kind == "discharge summary" and reading.status is ReadStatus.OK
+    s = reading.fields
+    assert (s.admitted, s.discharged, s.summary_no) == ("2026-02-27", "2026-03-03", "SMH/DS/2026/001184")
+    assert verifier.lookup(s)[0] is RegistryAnswer.VERIFIED
+    ans, note = verifier.lookup(_r(s, discharged="2026-03-04"))
+    assert ans is RegistryAnswer.MISMATCH and "discharge summary" in note
+    other = vision.read_any(store.summary_pdf(SUMMARY_DATES_MISMATCH.summary_no), "ds2.pdf").fields
+    assert verifier.lookup(other)[0] is RegistryAnswer.NOT_COVERED
+
+
+def test_tc30_packet_findings_compare_the_bill_with_the_summary():
+    """TC-30. Steps: compare bill 1 with its own summary; bill 4 with the mismatched
+    summary; bill 1 with the mismatched summary; a summary the issuer contradicts, once
+    corroborated and once not.
+    Expected: nothing against the matching pair; the mismatched pair gives two
+    cross-document findings (bill outside the stay; surgery billed, no operation); the
+    cross-hospital pair adds 'issuer differs'; a contradicted summary is an independent
+    finding only when its reading is corroborated."""
+    from trustladder import packet, vision
+    from trustladder.cases import SUMMARY_DATES_MISMATCH, SUMMARY_FOR_BILL_1
+    from trustladder.models import CROSS_DOCUMENT, SUMMARY_REGISTRY
+    from trustladder.seed import db_path
+    from trustladder.store import Store
+    store = Store(db_path(DATA_DIR)); verifier = Verifier(RegistryStore(DATA_DIR))
+    bill1 = read_bill((DATA_DIR / "showcase" / "01_genuine_bill.pdf").read_bytes())[1]
+    bill4 = read_bill((DATA_DIR / "showcase" / "04_genuine_hospital_not_joined.pdf").read_bytes())[1]
+    ds1 = packet.judge_summary(vision.read_any(store.summary_pdf(SUMMARY_FOR_BILL_1.summary_no), "a.pdf"), verifier, "a.pdf")
+    ds2 = packet.judge_summary(vision.read_any(store.summary_pdf(SUMMARY_DATES_MISMATCH.summary_no), "b.pdf"), verifier, "b.pdf")
+    assert packet.packet_findings(bill1, ds1) == []
+    checks = {f.check for f in packet.packet_findings(bill4, ds2)}
+    assert checks == {"bill_outside_stay", "surgery_billed_no_operation"}
+    assert all(f.family == CROSS_DOCUMENT for f in packet.packet_findings(bill4, ds2))
+    assert "issuer_differs" in {f.check for f in packet.packet_findings(bill1, ds2)}
+    bad = packet.SummaryResult("c.jpg", ReadStatus.OK, ds1.fields, "read", RegistryAnswer.MISMATCH,
+                               "record differs", {"corroborated": False}, {})
+    f = packet.packet_findings(bill1, bad)[0]
+    assert f.family == SUMMARY_REGISTRY and f.independent is False
+    bad.read_report = {"corroborated": True}
+    assert packet.packet_findings(bill1, bad)[0].independent is True
+
+
+def test_tc31_a_packet_that_does_not_add_up_goes_to_a_person_even_on_a_proven_bill():
+    """TC-31. Steps: submit bill 1 with its summary; bill 4 with the mismatched summary;
+    bill 1 with the mismatched summary; a fabricated bill with bill 1's summary.
+    Expected: (a) Authentic, Paid, the summary stored with the claim as Verified and an
+    audit row 'Discharge summary checked'; (b) Suspicious R5 (one family: cross-document),
+    In review; (c) still Authentic (the bill is proven) but In review, never paid
+    automatically; (d) Tampered R3, with the cross-document finding listed too."""
+    import tempfile
+    from trustladder.cases import SUMMARY_DATES_MISMATCH, SUMMARY_FOR_BILL_1
+    from trustladder.models import CROSS_DOCUMENT
+    from trustladder.seed import db_path
+    from trustladder.service import submit_claim
+    from trustladder.store import Store
+    world = Store(db_path(DATA_DIR)); verifier = Verifier(RegistryStore(DATA_DIR))
+    ds1, ds2 = world.summary_pdf(SUMMARY_FOR_BILL_1.summary_no), world.summary_pdf(SUMMARY_DATES_MISMATCH.summary_no)
+    store = Store(Path(tempfile.mkdtemp()) / "p.db"); store.add_customer("C1", "Meera Kulkarni", "Pune")
+    sc = DATA_DIR / "showcase"
+    a = submit_claim(store, verifier, "C1", (sc / "01_genuine_bill.pdf").read_bytes(), "01.pdf",
+                     attachments=[(ds1, "ds1.pdf", None)])
+    ca = store.claim(a)
+    assert (ca["verdict"], ca["status"]) == ("Authentic", "Paid")
+    docs = store.claim_documents(a)
+    assert len(docs) == 1 and '"registry_answer": "Verified"' in docs[0]["result_json"]
+    assert any(e["event"] == "Discharge summary checked" and e["claim_id"] == a for e in store.audit())
+    b = submit_claim(store, verifier, "C1", (sc / "04_genuine_hospital_not_joined.pdf").read_bytes(), "04.pdf",
+                     attachments=[(ds2, "ds2.pdf", None)])
+    cb = store.claim(b)
+    assert (cb["verdict"], cb["status"]) == ("Suspicious", "In review") and cb["rule"].startswith("R5")
+    store2 = Store(Path(tempfile.mkdtemp()) / "q.db"); store2.add_customer("C1", "Meera Kulkarni", "Pune")
+    c = submit_claim(store2, verifier, "C1", (sc / "01_genuine_bill.pdf").read_bytes(), "01.pdf",
+                     attachments=[(ds2, "ds2.pdf", None)])
+    cc = store2.claim(c)
+    assert (cc["verdict"], cc["status"]) == ("Authentic", "In review"), "proven bill, packet disagrees: a person looks"
+    d = submit_claim(store2, verifier, "C1", (sc / "03_made_from_nothing.pdf").read_bytes(), "03.pdf",
+                     attachments=[(ds1, "ds1.pdf", None)])
+    cd = store2.claim(d)
+    assert cd["verdict"] == "Tampered" and cd["rule"].startswith("R3")
+    assert CROSS_DOCUMENT in cd["result_json"]

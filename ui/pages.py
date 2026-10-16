@@ -29,11 +29,11 @@ import streamlit as st
 
 from trustladder import crypto, vision
 from trustladder.cases import HOSPITALS
-from trustladder.models import BillFields, LineItem
+from trustladder.models import KIND_SUMMARY, BillFields, DischargeFields, LineItem
 from trustladder.policy import (ALLOWED, COST_PER_HOUR_RS, HOLD, MINUTES_PER_REVIEW, PAY,
                                 REQUEST, REVIEW, baseline, evaluate, route)
 from trustladder.registry import RegistryStore, Verifier
-from trustladder.service import (enrol_hospital, issue_bill, resubmit_claim,
+from trustladder.service import (enrol_hospital, issue_bill, issue_summary, resubmit_claim,
                                  submit_claim)
 from trustladder.store import CUSTOMER_TEXT, OPEN_STATUSES, Store, result_from_json
 
@@ -85,14 +85,22 @@ def hospital_issue(ctx: Ctx) -> None:
         cust = st.selectbox("Patient", customers, index=default,
                             format_func=lambda c: f"{c['name']} ({c['city']})",
                             key="h_patient")
-        bill_date = st.date_input("Bill date", _dt.date(2026, 3, 21), key="h_date")
+        d1, d2 = st.columns(2)
+        admitted = d1.date_input("Admitted", _dt.date(2026, 3, 18), key="h_admitted")
+        bill_date = d2.date_input("Discharged and billed", _dt.date(2026, 3, 21), key="h_date")
+        diagnosis = st.text_input("Diagnosis", "Acute appendicitis", key="h_diagnosis")
+        procedure = st.text_input("Operation (leave empty if none)",
+                                  "Laparoscopic appendicectomy under general anaesthesia", key="h_procedure")
     with c2:
         charges = st.data_editor(pd.DataFrame({
             "Description": ["Room charges (semi-private)", "Surgeon fee", "Pharmacy and consumables",
                             "Laboratory investigations"],
             "Amount (Rs)": [24000, 55000, 18250, 6400]}), num_rows="dynamic", key="h_items",
             width="stretch")
-    if st.button("Issue bill and publish", type="primary", key="h_issue"):
+    # One button issues the whole discharge set, as a hospital does at discharge: the bill
+    # and the discharge summary, each with its own ticket and its own two codes in the
+    # registry. Same mechanism, every document the hospital issues.
+    if st.button("Issue bill and discharge summary, and publish", type="primary", key="h_issue"):
         items = [LineItem(str(d), int(round(float(a) * 100)))
                  for d, a in zip(charges["Description"], charges["Amount (Rs)"]) if str(d).strip()]
         serial = 7000 + len(ctx.store.bills_of_issuer(issuer_id))
@@ -100,29 +108,40 @@ def hospital_issue(ctx: Ctx) -> None:
                           cust["name"], items, sum(i.amount_paise for i in items))
         pdf = issue_bill(ctx.store, ctx.registry, ctx.verifier, bill, cust["customer_id"],
                          f"{name.split()[0]} billing")
-        st.session_state.h_issued = (bill, pdf)
+        summary = DischargeFields(issuer_id, name, f"{bill_prefix}/DS/2026/{serial:06d}",
+                                  f"{bill_prefix}-UH-{200000 + serial}", cust["name"],
+                                  admitted.isoformat(), bill_date.isoformat(), diagnosis.strip() or "Not stated",
+                                  procedure.strip(), "Dr. R. Kulkarni, MS")
+        spdf = issue_summary(ctx.store, ctx.registry, ctx.verifier, summary, cust["customer_id"],
+                             f"{name.split()[0]} billing")
+        st.session_state.h_issued = (bill, pdf, summary, spdf)
         st.session_state.story_bill = bill.bill_no        # the demo story follows this one bill
         st.session_state.story_customer = cust["customer_id"]
     issued = st.session_state.get("h_issued")
     if issued:
-        bill, pdf = issued
-        st.success(f"Issued {bill.bill_no} for {inr(bill.total_paise)}. "
-                   f"Ticket printed on the bill: **{bill.ticket}**")
+        bill, pdf, summary, spdf = issued
+        st.success(f"Issued {bill.bill_no} for {inr(bill.total_paise)}, ticket **{bill.ticket}**, with "
+                   f"discharge summary {summary.summary_no}, ticket **{summary.ticket}**.")
         p1, p2 = st.columns([2, 3], gap="large")
-        p1.image(C.preview_png(pdf), width="stretch")
+        with p1:
+            st.image(C.preview_png(pdf), width="stretch")
+            st.image(C.preview_png(spdf), width="stretch")
         with p2:
-            st.markdown("**What the registry received:** two scrambled codes and the hospital's signature. "
-                        "No name, no amount, no diagnosis.")
+            st.markdown("**What the registry received:** two scrambled codes per document and the hospital's "
+                        "signature. No name, no amount, no diagnosis.")
             with st.expander("Show the exact codes that were published"):
                 batch = ctx.registry.load_file(issuer_id)["batches"][-1]
                 st.code(json.dumps({"issuer": batch["issuer"], "published": batch["published"],
                                     "entries": [[k[:20] + "…", v[:20] + "…"] for k, v in batch["entries"]],
                                     "signature": batch["signature"][:20] + "…"}, indent=2, ensure_ascii=False),
                         language="json")
-            st.markdown("**Give the bill to the patient.** In this demo you download it here, and upload "
-                        "it as the customer in the next step.")
+            st.markdown("**Give both to the patient.** In this demo you download them here, and attach "
+                        "them together as the customer in the next step.")
             st.download_button("Download the bill (PDF)", pdf, f"{bill.bill_no.replace('/', '_')}.pdf",
                                mime="application/pdf", key="h_dl", type="primary")
+            st.download_button("Download the discharge summary (PDF)", spdf,
+                               f"{summary.summary_no.replace('/', '_')}.pdf", mime="application/pdf",
+                               key="h_dl_summary")
 
 
 def hospital_my_bills(ctx: Ctx) -> None:
@@ -139,6 +158,13 @@ def hospital_my_bills(ctx: Ctx) -> None:
         st.dataframe(df[["bill_no", "patient", "bill_date", "Amount", "ticket"]].rename(
             columns={"bill_no": "Bill no", "patient": "Patient", "bill_date": "Bill date",
                      "ticket": "Ticket on the bill"}), hide_index=True, width="stretch")
+    summaries = ctx.store.summaries_of_issuer(issuer_id)
+    if summaries:
+        st.markdown("**Discharge summaries issued**")
+        st.dataframe(pd.DataFrame(summaries)[["summary_no", "patient", "admitted", "discharged", "ticket"]].rename(
+            columns={"summary_no": "Summary no", "patient": "Patient", "admitted": "Admitted",
+                     "discharged": "Discharged", "ticket": "Ticket on the summary"}),
+            hide_index=True, width="stretch")
     st.caption("You never see who checked a bill: insurers look it up on their own copy of the registry.")
 
 
@@ -189,6 +215,16 @@ _FORM_FIELDS = [
     ("total", "Grand total (Rs)", "total", "Rupees, as printed"),
     ("ticket", "Ticket printed on the bill", "ticket", "Leave empty if the bill has none"),
 ]
+_SUMMARY_FORM_FIELDS = [
+    ("issuer_id", "Hospital's issuer ID", "issuer_id", "Printed under the hospital's name"),
+    ("summary_no", "Summary number", "summary_no", ""),
+    ("admitted", "Date of admission (YYYY-MM-DD)", "admitted", ""),
+    ("discharged", "Date of discharge (YYYY-MM-DD)", "discharged", ""),
+    ("patient", "Patient", "patient", ""),
+    ("ticket", "Ticket printed on the summary", "ticket", "Leave empty if there is none"),
+    ("diagnosis", "Diagnosis", None, ""),
+    ("procedure", "Operation (empty if none)", None, ""),
+]
 
 
 def _conf_chip(value: float | None) -> str:
@@ -213,8 +249,9 @@ def _reading_form(reading: vision.Reading, form_key: str) -> tuple[dict, bool]:
     """
     model = reading.model or "the vision model"
     lang = f" · printed in <b>{reading.language}</b>" if reading.language else ""
+    what = "discharge summary" if reading.kind == KIND_SUMMARY else "bill"
     if reading.status.value == "Read":
-        title = "Here is what the vision model read from your photo"
+        title = f"Here is what the vision model read from your photo: a {what}"
         sub = (f'<span class="ai">AI</span> Read by <b>{model}</b>{lang}. Check each line, correct '
                'anything that is wrong, then confirm.')
     elif reading.partial:
@@ -228,91 +265,112 @@ def _reading_form(reading: vision.Reading, form_key: str) -> tuple[dict, bool]:
     values = vision.form_values(reading)
     typed = {}
     cols = st.columns(2)
-    for i, (key, label, ckey, help_) in enumerate(_FORM_FIELDS):
+    form_fields = _SUMMARY_FORM_FIELDS if reading.kind == KIND_SUMMARY else _FORM_FIELDS
+    for i, (key, label, ckey, help_) in enumerate(form_fields):
         with cols[i % 2]:
             shown = values.get(key, "")
             if key == "total":
                 shown = f"{shown / 100:,.2f}" if shown else ""
-            conf = reading.confidence.get(ckey) if reading.status.value == "Read" else None
+            conf = reading.confidence.get(ckey) if (ckey and reading.status.value == "Read") else None
             st.markdown(f'<div style="font-size:0.84rem;color:#64748B;margin-bottom:-10px">{label}'
                         f'{_conf_chip(conf)}</div>', unsafe_allow_html=True)
             typed[key] = st.text_input(label, value=str(shown), key=f"{form_key}_{key}",
                                        label_visibility="collapsed", help=help_ or None)
-    if reading.fields and reading.fields.items:
+    if reading.kind != KIND_SUMMARY and reading.fields and reading.fields.items:
         with st.expander(f"The {len(reading.fields.items)} charges it read"):
             st.dataframe(pd.DataFrame([{"Description": i.description, "Amount (Rs)": f"{i.amount_paise / 100:,.2f}"}
                                        for i in reading.fields.items]), hide_index=True, width="stretch")
-    confirmed = st.checkbox("These are the details on my bill", key=f"{form_key}_ok")
+    confirmed = st.checkbox("These are the details on my " + what, key=f"{form_key}_ok")
     st.caption("In this demo the reading model is hosted by Google and the bill is synthetic. In the "
                "product the reader runs inside the insurer, and your photo never leaves it.")
     return typed, confirmed
 
 
 def customer_submit(ctx: Ctx) -> None:
-    """The customer's only way in: upload the bill the hospital gave them, as a PDF or a photo.
+    """The customer's only way in: the claim packet, uploaded on one screen.
 
-    A PDF with a text layer is read exactly and only needs a glance before submitting.
-    A photograph is read by the vision model, and what it read is shown back as a form
-    the customer can correct and must confirm: the reading is the customer's statement
-    once they submit it, and the number of corrections is the reader's measured error.
+    A hospitalisation claim is a bill and, usually, a discharge summary. Both go in
+    the one box, as PDFs or photos, and one Submit sends the packet. Each file is
+    recognised for what it is (the text layer says so for a PDF; the vision model says
+    so for a picture), and each photo gets its own reading form to confirm. The bill
+    is the document the rule decides on; the summary is checked against it and against
+    the hospital's record, and the packet goes to a person if the two disagree.
     """
     cid = ctx.user["customer_id"]
-    page_title("Submit a claim", "Upload the bill your hospital gave you, or a photo of it. It is "
-                                 "checked the moment you submit, and you are told straight away where "
-                                 "your claim stands.")
-    up = st.file_uploader("Your bill (PDF, or a photo as JPG or PNG)", type=["pdf", "jpg", "jpeg", "png"],
-                          key="cs_upload")
-    reading = None
-    typed, confirmed = {}, False
-    picture = False
-    if up is not None:
+    page_title("Submit a claim", "Attach your hospital bill and, if you have it, the discharge summary, as "
+                                 "PDFs or photos. The claim is checked the moment you submit, and you are "
+                                 "told straight away where it stands.")
+    ups = st.file_uploader("Your claim documents (bill and discharge summary; PDF, JPG or PNG)",
+                           type=["pdf", "jpg", "jpeg", "png"], key="cs_upload", accept_multiple_files=True)
+    ups = ups or []
+    # Read every file once, keyed on its content, so a model is never re-run on a click.
+    docs = []           # (upload, data, reading, typed, confirmed, picture)
+    for up in ups:
         data = up.getvalue()
         picture = _is_picture(data, up.name)
-        # The bill is shown BEFORE the Submit button, not after it. With the button first,
-        # the obvious next click came before the chance to check the file, which is the
-        # wrong order for the one irreversible thing a customer does on this screen.
+        file_key = f"{up.name}:{len(data)}:{hash(data[:4096])}"
+        readings = st.session_state.setdefault("cs_readings", {})
+        if file_key not in readings:
+            with st.spinner(f"Reading {up.name}" + (" with a vision model…" if picture else "…")):
+                readings[file_key] = vision.read_any(data, up.name)
+        reading = readings[file_key]
+        docs.append([up, data, reading, {}, not picture, picture, file_key])
+    bills = [d for d in docs if d[2].kind != KIND_SUMMARY]
+    summaries = [d for d in docs if d[2].kind == KIND_SUMMARY]
+    if docs:
+        # The documents are shown BEFORE the Submit button, not after it: the one
+        # irreversible thing a customer does here deserves a look first.
+        st.markdown("**Check this is the right bill" + (" and discharge summary" if summaries else "")
+                    + ", then submit.**")
+    for d in docs:
+        up, data, reading, _, _, picture, file_key = d
+        what = "Discharge summary" if reading.kind == KIND_SUMMARY else "Bill"
+        st.markdown(f"**{what}** · `{up.name}`")
         if not picture:
-            st.markdown("**Check this is the right bill, then submit it.**")
-            st.image(C.preview_png(data), width=430)
-            st.write("")
+            # The document is shown BEFORE the Submit button, so it can be checked first.
+            st.image(C.preview_png(data), width=380)
         else:
-            # Read once per file. The model is slow and must not re-run on every click.
-            file_key = f"{up.name}:{len(data)}:{hash(data[:4096])}"
-            if st.session_state.get("cs_read_key") != file_key:
-                with st.spinner("Reading your photo with a vision model…"):
-                    st.session_state.cs_reading = vision.read_any(data, up.name)
-                st.session_state.cs_read_key = file_key
-            reading = st.session_state.cs_reading
             left, right = st.columns([2, 3], gap="large")
             with left:
                 st.image(C.preview_any(data, up.name), width="stretch")
             with right:
-                typed, confirmed = _reading_form(reading, f"rf_{abs(hash(file_key))}")
-            st.write("")
+                d[3], d[4] = _reading_form(reading, f"rf_{abs(hash(file_key))}")
+        st.write("")
+    if ups and not bills:
+        st.warning("A claim needs the hospital bill. Add it to the packet; the discharge summary alone "
+                   "cannot be claimed.")
+    if len(bills) > 1:
+        st.warning("One claim, one bill. Submit the second bill as a separate claim.")
     c1, c2 = st.columns([1, 3])
-    can_submit = up is not None and (not picture or confirmed)
+    can_submit = len(bills) == 1 and all(d[4] for d in docs)
     submitted = c1.button("Submit claim", type="primary", key="cs_submit", disabled=not can_submit)
     with c2:
         sample_pack_button(ctx, "cs_pack")
-        if picture and not confirmed:
-            st.caption("Confirm the details above to submit.")
+        if docs and not all(d[4] for d in docs):
+            st.caption("Confirm the details read from each photo to submit.")
     if submitted:
         # A bill that came in before is not refused: it is checked like any other,
         # and "already claimed on this policy" becomes one more piece of evidence.
         # The audit trail names the PARTY who claimed, not the login they used:
         # "Customer" is a role label for the screen, and an auditor needs the person.
         # submit_claim falls back to the customer's own name when no actor is given.
-        confirmed_reading = vision.apply_corrections(reading, typed) if picture else None
-        with st.spinner("Checking your bill…"):
-            st.session_state.cs_last = submit_claim(ctx.store, ctx.verifier, cid, up.getvalue(), up.name,
-                                                    reading=confirmed_reading, background=True)
+        b = bills[0]
+        bill_reading = vision.apply_corrections(b[2], b[3]) if b[5] else None
+        attachments = [(d[1], d[0].name, vision.apply_corrections(d[2], d[3]) if d[5] else d[2])
+                       for d in summaries]
+        with st.spinner("Checking your claim…"):
+            st.session_state.cs_last = submit_claim(ctx.store, ctx.verifier, cid, b[1], b[0].name,
+                                                    reading=bill_reading, background=True,
+                                                    attachments=attachments)
     last = st.session_state.get("cs_last")
     if last:
         c = ctx.store.claim(last)
         st.write("")
         st.divider()
+        attached = ctx.store.claim_documents(last)
+        extra = f" and `{attached[0]['file_name']}`" if attached else ""
         st.markdown(f"**Your last submission** · {c['issuer_name']} · claim {c['claim_id']} · "
-                    f"you uploaded `{c['file_name']}`", unsafe_allow_html=True)
+                    f"you uploaded `{c['file_name']}`{extra}", unsafe_allow_html=True)
         # The customer sees the STATUS of their claim, never the verdict, the findings or
         # the stage ladder. See components.claim_receipt for why.
         C.claim_receipt(c["status"], c["pdf"], CUSTOMER_TEXT[c["status"]], c["file_name"])
@@ -365,6 +423,7 @@ def _claim_detail(ctx: Ctx, claim_id: str) -> None:
                    show_findings=True)
     st.write("")
     C.reading_line(r)
+    C.packet_panel(ctx.store.claim_documents(claim_id))
     C.agent_panel(r, pending=bool(c.get("narrative_pending")))
 
 

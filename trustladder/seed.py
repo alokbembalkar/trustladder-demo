@@ -25,13 +25,14 @@ import random
 import shutil
 from pathlib import Path
 
-from .bills import (photo_of, random_bill, render_altered, render_discount_resaved, render_fabricated,
-                    render_genuine, render_resaved, render_scan)
-from .cases import DATA_DIR, HOSPITALS, MARATHI_BILL, ROOT, build_showcase, build_simulation
-from .models import BillFields
+from .bills import (photo_of, random_bill, render_altered, render_discharge_summary, render_discount_resaved,
+                    render_fabricated, render_genuine, render_resaved, render_scan)
+from .cases import (DATA_DIR, HOSPITALS, MARATHI_BILL, ROOT, SUMMARY_DATES_MISMATCH, SUMMARY_FOR_BILL_1,
+                    build_showcase, build_simulation)
+from .models import BillFields, DischargeFields
 from .reader import read_bill
 from .registry import RegistryStore, Verifier
-from .service import enrol_hospital, issue_bill, submit_claim
+from .service import enrol_hospital, issue_bill, issue_summary, submit_claim
 from .store import Store
 
 DEMO_PASSWORD = "TrustLadder@2026"
@@ -98,6 +99,15 @@ SAMPLE_PACK = [
      "A phone PHOTO of a genuine Sahyog bill printed in Marathi. The vision model reads it in "
      "Marathi; the hospital confirms it.",
      "Authentic"),
+    ("09_discharge_summary_for_bill_1.jpg",
+     "A scanned DISCHARGE SUMMARY for bill 1 (same stay, same patient). Attach it with bill 1: the "
+     "hospital confirms both and the dates agree.",
+     "Authentic, with bill 1"),
+    ("10_discharge_summary_dates_mismatch.jpg",
+     "A scanned DISCHARGE SUMMARY from the hospital that has not joined, for a stay of 12-15 March. "
+     "Attach it with bill 4 (dated 7 March): neither hospital can be asked, and the packet does not "
+     "add up.",
+     "Suspicious, with bill 4"),
 ]
 
 
@@ -106,10 +116,12 @@ def build_sample_pack(data_dir: Path = DATA_DIR) -> Path:
     import zipfile
     out = Path(data_dir) / "sample_bills"
     out.mkdir(parents=True, exist_ok=True)
-    readme = ["TrustLadder sample bills (synthetic: fictional hospitals, one patient, invented amounts).",
+    readme = ["TrustLadder sample documents (synthetic: fictional hospitals, one patient, invented amounts).",
               "This is what the demo's patient, Meera Kulkarni, has on her phone: PDFs her hospitals",
-              "sent her, and two photographs she took of printed bills (05 and 08). File 2 is file 1",
-              "edited; file 7 is file 4 after a hospital discount and a phone app re-save.",
+              "sent her, two photographs she took of printed bills (05 and 08), and two scanned",
+              "discharge summaries (09 and 10). File 2 is file 1 edited; file 7 is file 4 after a",
+              "hospital discount and a phone app re-save. A claim is a PACKET: attach the bill and",
+              "the discharge summary together on the one upload screen.",
               "Upload any of these in the portal at Customer -> Submit a claim: that one screen takes a",
               "PDF or a photo, genuine or tampered, and checks every one the same way. A photo is read by",
               "a vision model and the details are shown to you to confirm before you submit.",
@@ -192,6 +204,15 @@ def build_world(data_dir: Path = DATA_DIR) -> Store:
     #    customer holds. Both carry the same fields, so the registry confirms the picture.
     mb = BillFields(**{**MARATHI_BILL.__dict__, "items": list(MARATHI_BILL.items)})
     issue_bill(store, registry, verifier, mb, meera[0], "Sahyog billing", "2026-03-05 12:40")
+    #    the discharge summaries: one for bill 1, issued and published by Sahyog; one from the
+    #    hospital that has not joined, whose dates do not contain bill 4. Both reach the pack as
+    #    scans, which is how discharge summaries arrive.
+    ds1 = DischargeFields(**SUMMARY_FOR_BILL_1.__dict__)
+    ds1_pdf = issue_summary(store, registry, verifier, ds1, meera[0], "Sahyog billing", "2026-03-03 11:25")
+    (showcase / "09_discharge_summary_for_bill_1.jpg").write_bytes(photo_of(ds1_pdf, seed=9, quality=70))
+    ds2 = DischargeFields(**SUMMARY_DATES_MISMATCH.__dict__)
+    ds2_pdf = issue_summary(store, registry, verifier, ds2, meera[0], "Shanti billing", "2026-03-15 10:10")
+    (showcase / "10_discharge_summary_dates_mismatch.jpg").write_bytes(photo_of(ds2_pdf, seed=10, quality=70))
     marathi_photo = ROOT / "assets" / "samples" / "marathi_bill_photo.jpg"
     if marathi_photo.exists():
         (showcase / "08_marathi_bill_photo.jpg").write_bytes(marathi_photo.read_bytes())

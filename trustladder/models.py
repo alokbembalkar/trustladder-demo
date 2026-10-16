@@ -40,6 +40,45 @@ class BillFields:
     ticket: str = ""
 
 
+@dataclass
+class DischargeFields:
+    """The fields of a hospital discharge summary, as issued or as read back.
+
+    The second document in a hospitalisation claim. A real summary carries a page of
+    clinical text; what the registry commits to, and what the cross-document check
+    uses, are the few fields below. `bill_date` is a property so the registry, which
+    was written for bills, can date a summary the same way: by its discharge date.
+    """
+    issuer_id: str
+    issuer_name: str
+    summary_no: str         # the hospital's document number
+    uhid: str               # the hospital's patient id
+    patient: str
+    admitted: str           # ISO date
+    discharged: str         # ISO date
+    diagnosis: str
+    procedure: str          # "" when no operation was performed
+    consultant: str
+    ticket: str = ""
+
+    @property
+    def bill_date(self) -> str:
+        return self.discharged
+
+    @property
+    def doc_no(self) -> str:
+        return self.summary_no
+
+
+KIND_BILL = "bill"
+KIND_SUMMARY = "discharge summary"
+
+
+def kind_of(doc) -> str:
+    """Which document type a fields object is, in the words the screens use."""
+    return KIND_SUMMARY if isinstance(doc, DischargeFields) else KIND_BILL
+
+
 # --------------------------------------------------------------------------
 # Stage outputs
 # --------------------------------------------------------------------------
@@ -112,6 +151,15 @@ class EvidenceGrade(str, Enum):
 # only to the insurer's own records, so it is kept in its own family: it can never
 # share a cause with something found inside the PDF.
 CLAIM_HISTORY = "claim history"
+# Evidence from reading the packet as a whole: the bill against the discharge summary.
+# Dates that do not line up, a different patient, a surgeon's fee with no operation.
+CROSS_DOCUMENT = "cross-document"
+# The issuer's registry speaking about the discharge summary (the bill's own answer
+# drives the rule; the summary's answer is one more line of evidence).
+SUMMARY_REGISTRY = "discharge summary registry"
+# Families that must send a claim to a person even when the bill itself is proven:
+# the money question is not the document question.
+PACKET_FAMILIES = (CLAIM_HISTORY, CROSS_DOCUMENT, SUMMARY_REGISTRY)
 
 
 @dataclass

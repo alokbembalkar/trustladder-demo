@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import threading
 
-from . import llm, vision
-from .bills import render_genuine
+from dataclasses import replace
+
+from . import llm, packet, vision
+from .bills import render_discharge_summary, render_genuine
 from .cases import HOSPITALS
 from .evidence import build as build_evidence
-from .models import CLAIM_HISTORY, BillFields, Finding
+from .models import CLAIM_HISTORY, KIND_SUMMARY, BillFields, DischargeFields, Finding
 from .pipeline import narrate, run_ladder, with_extra_findings
 from .registry import Publisher, RegistryStore, Verifier
 from .store import Store
@@ -46,7 +48,8 @@ def duplicate_findings(store: Store, customer_id: str, bill_no: str) -> list[Fin
 def submit_claim(store: Store, verifier: Verifier, customer_id: str, pdf: bytes, file_name: str,
                  bill_no: str = "", truth: str = "", submitted_at: str | None = None,
                  actor: str = "", reading: vision.Reading | None = None,
-                 background: bool = False) -> str:
+                 background: bool = False,
+                 attachments: list[tuple[bytes, str, "vision.Reading | None"]] | None = None) -> str:
     """A customer submits a bill: TrustLadder checks it on attach, the policy routes it.
 
     The bill number is taken from the uploaded document itself when it can be read,
@@ -62,6 +65,10 @@ def submit_claim(store: Store, verifier: Verifier, customer_id: str, pdf: bytes,
     customer's status never waits on a network call, and the verdict is the same
     either way because the models run after the rule. The seeder uses the foreground
     path so the snapshot is complete when it is taken.
+
+    `attachments` are the other documents of the claim packet, each as (bytes, file
+    name, reading-or-None): today the discharge summary. Each is read and looked up on
+    its own, and the packet checks in `packet.py` add their findings to the bill's.
     """
     customer = store.customer(customer_id)
     result = run_ladder(pdf, verifier, file_name, reading, narrate=False)
@@ -69,7 +76,22 @@ def submit_claim(store: Store, verifier: Verifier, customer_id: str, pdf: bytes,
     # The insurer knows something the PDF cannot say: whether this bill came in
     # before. Fold that in and let the published rule weigh it with the rest.
     earlier = [c for c in store.claims(customer_id=customer_id) if c["bill_no"] == bill_no] if bill_no else []
-    result = with_extra_findings(result, duplicate_findings(store, customer_id, bill_no))
+    extra = duplicate_findings(store, customer_id, bill_no)
+    summaries: list[tuple[bytes, str, packet.SummaryResult]] = []
+    for data, name, att_reading in (attachments or []):
+        att_reading = att_reading or vision.read_any(data, name)
+        if att_reading.kind != KIND_SUMMARY:
+            # Only a discharge summary is a packet document today; anything else is
+            # kept with the claim for the officer but takes no part in the checks.
+            att_reading = vision.Reading(**{**att_reading.__dict__, "kind": KIND_SUMMARY,
+                                            "status": att_reading.status})
+        judged = packet.judge_summary(att_reading, verifier, name)
+        summaries.append((data, name, judged))
+        extra += packet.packet_findings(result.fields, judged)
+    result = with_extra_findings(result, extra)
+    if summaries:
+        result = replace(result, read_report={**result.read_report,
+                                              "summary": summaries[0][2].to_json()})
     is_pdf = vision.mime_of(file_name) is None
 
     if not background:
@@ -77,9 +99,11 @@ def submit_claim(store: Store, verifier: Verifier, customer_id: str, pdf: bytes,
         # are configured, from fixed sentences otherwise).
         result = narrate(result, earlier, is_pdf)
         graph = build_evidence(result)
-        return store.record_claim(customer_id, customer["name"], file_name, pdf, result,
-                                  graph.independent_against, bill_no=bill_no, truth=truth,
-                                  submitted_at=submitted_at, actor=actor or customer["name"])
+        claim_id = store.record_claim(customer_id, customer["name"], file_name, pdf, result,
+                                      graph.independent_against, bill_no=bill_no, truth=truth,
+                                      submitted_at=submitted_at, actor=actor or customer["name"])
+        _attach(store, claim_id, summaries)
+        return claim_id
 
     graph = build_evidence(result)
     pending = llm.available()
@@ -87,6 +111,7 @@ def submit_claim(store: Store, verifier: Verifier, customer_id: str, pdf: bytes,
                                   graph.independent_against, bill_no=bill_no, truth=truth,
                                   submitted_at=submitted_at, actor=actor or customer["name"],
                                   narrative_pending=pending)
+    _attach(store, claim_id, summaries)
     if pending:
         threading.Thread(target=_narrate_later, args=(store.path, claim_id, result, earlier, is_pdf),
                          daemon=True).start()
@@ -94,6 +119,16 @@ def submit_claim(store: Store, verifier: Verifier, customer_id: str, pdf: bytes,
         # No model to wait for: the fixed-order trace is the account, and it is ready now.
         store.update_narrative(claim_id, narrate(result, earlier, is_pdf))
     return claim_id
+
+
+def _attach(store: Store, claim_id: str, summaries: list) -> None:
+    """Keep the packet's other documents with the claim, each with its own record."""
+    for data, name, judged in summaries:
+        store.add_claim_document(claim_id, KIND_SUMMARY, name, data, judged.to_json())
+    if summaries:
+        j = summaries[0][2]
+        store.log("TrustLadder", "system", "Discharge summary checked", claim_id,
+                  f"{j.registry_answer.value}: {j.registry_note[:120]}")
 
 
 def _narrate_later(db_path, claim_id: str, result, earlier: list[dict], is_pdf: bool) -> None:
@@ -149,6 +184,27 @@ def issue_bill(store: Store, registry: RegistryStore, verifier: Verifier, bill: 
                    bill.bill_date, bill.total_paise, bill.ticket, joined, pdf, issued_at)
     store.log(actor, "hospital", "Bill issued and published" if joined else "Bill issued",
               "", f"{bill.bill_no} for {bill.patient}", issued_at)
+    return pdf
+
+
+def issue_summary(store: Store, registry: RegistryStore, verifier: Verifier, summary: DischargeFields,
+                  customer_id: str, actor: str, issued_at: str | None = None) -> bytes:
+    """The hospital issues a discharge summary: ticket printed, two codes published, copy
+    to the patient. The same path as a bill, which is the point: one mechanism, every
+    document the hospital issues."""
+    joined = summary.issuer_id in registry.load_directory()
+    if joined:
+        publisher = Publisher(registry, summary.issuer_id)
+        if not summary.ticket:
+            summary.ticket = publisher.new_ticket()
+        publisher.publish([summary])
+        verifier.refresh()
+    pdf = render_discharge_summary(summary, joined=joined)
+    store.add_summary(summary.summary_no, summary.issuer_id, summary.issuer_name, customer_id,
+                      summary.patient, summary.admitted, summary.discharged, summary.ticket, joined,
+                      pdf, issued_at)
+    store.log(actor, "hospital", "Discharge summary issued and published" if joined else
+              "Discharge summary issued", "", f"{summary.summary_no} for {summary.patient}", issued_at)
     return pdf
 
 

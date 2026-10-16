@@ -33,7 +33,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-from .models import CLAIM_HISTORY, LadderResult
+from .models import CLAIM_HISTORY, PACKET_FAMILIES, LadderResult
 from .policy import ALLOWED, DEFAULT_POLICY, HOLD, PAY, REQUEST, REVIEW, validate
 
 # --------------------------------------------------------------------------
@@ -160,6 +160,38 @@ class Store:
                       (bill_no, issuer_id, issuer_name, customer_id, patient, bill_date,
                        int(total_paise), ticket, int(published), pdf, issued_at or now()))
 
+    def add_summary(self, summary_no: str, issuer_id: str, issuer_name: str, customer_id: str,
+                    patient: str, admitted: str, discharged: str, ticket: str, published: bool,
+                    pdf: bytes, issued_at: str | None = None) -> None:
+        """The hospital's own ledger of discharge summaries, beside its bills."""
+        with self._conn() as c:
+            c.execute("INSERT OR REPLACE INTO summaries VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                      (summary_no, issuer_id, issuer_name, customer_id, patient, admitted, discharged,
+                       ticket, int(published), pdf, issued_at or now()))
+
+    def summaries_of_issuer(self, issuer_id: str) -> list[dict]:
+        with self._conn() as c:
+            return [dict(r) for r in c.execute(
+                "SELECT summary_no, patient, admitted, discharged, ticket, published, issued_at "
+                "FROM summaries WHERE issuer_id = ? ORDER BY issued_at DESC, summary_no DESC", (issuer_id,))]
+
+    def summary_pdf(self, summary_no: str) -> bytes:
+        with self._conn() as c:
+            return c.execute("SELECT pdf FROM summaries WHERE summary_no = ?", (summary_no,)).fetchone()["pdf"]
+
+    def add_claim_document(self, claim_id: str, kind: str, file_name: str, data: bytes,
+                           result_json: dict) -> None:
+        """A document attached to a claim besides the bill: today, the discharge summary."""
+        with self._conn() as c:
+            c.execute("INSERT INTO claim_documents (claim_id, kind, file_name, data, result_json) "
+                      "VALUES (?,?,?,?,?)", (claim_id, kind, file_name, data, json.dumps(result_json)))
+
+    def claim_documents(self, claim_id: str) -> list[dict]:
+        with self._conn() as c:
+            return [dict(r) for r in c.execute(
+                "SELECT kind, file_name, data, result_json FROM claim_documents WHERE claim_id = ? "
+                "ORDER BY id", (claim_id,))]
+
     def bills_of_issuer(self, issuer_id: str) -> list[dict]:
         with self._conn() as c:
             return [dict(r) for r in c.execute(
@@ -225,13 +257,15 @@ class Store:
             # an unreadable bill, or an uncorroborated reading the issuer contradicts, is
             # the customer's to fix with the original, not an officer's to judge
             status = "Waiting for customer"
-        if action == PAY and any(f.family == CLAIM_HISTORY for f in result.findings):
+        if action == PAY and any(f.family in PACKET_FAMILIES for f in result.findings):
             # The document is genuine and the issuer proved it, so the VERDICT stays
             # Authentic: that is the honest reading of the evidence. Whether to pay it
-            # a second time is a money question, not a document question, and it is
-            # settled here in the policy layer. Nobody is paid twice for one bill
-            # automatically; a person looks first. This can only ever make payment
-            # stricter, so the guarantee in policy.py still holds.
+            # is then a money question, not a document question, and it is settled
+            # here in the policy layer: a bill claimed before, a discharge summary the
+            # issuer contradicts, or a packet whose documents disagree with each other
+            # all send the claim to a person. Nobody is paid automatically on a packet
+            # that does not add up. This can only ever make payment stricter, so the
+            # guarantee in policy.py still holds.
             action = REVIEW
             status = STATUS_FOR_ACTION[REVIEW]
         claim_id = self.next_claim_id()
@@ -489,6 +523,12 @@ CREATE TABLE IF NOT EXISTS claims (
   truth TEXT DEFAULT '', total_paise INTEGER DEFAULT 0, result_json TEXT,
   read_source TEXT DEFAULT 'text layer', read_corrections INTEGER DEFAULT 0,
   narrative_pending INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS summaries (
+  summary_no TEXT PRIMARY KEY, issuer_id TEXT, issuer_name TEXT, customer_id TEXT, patient TEXT,
+  admitted TEXT, discharged TEXT, ticket TEXT, published INTEGER, pdf BLOB, issued_at TEXT);
+CREATE TABLE IF NOT EXISTS claim_documents (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, claim_id TEXT, kind TEXT, file_name TEXT, data BLOB,
+  result_json TEXT);
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, actor TEXT, role TEXT, event TEXT,
   claim_id TEXT, detail TEXT);

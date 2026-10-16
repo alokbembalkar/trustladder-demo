@@ -178,7 +178,7 @@ def test_tc44_hospital_to_customer_to_officer_to_auditor():
     at = _login("hospital")
     at.button(key="h_issue").click().run()
     assert not at.exception
-    ok = next(s.value for s in at.success if "Ticket printed on the bill" in s.value)
+    ok = next(s.value for s in at.success if "with discharge summary" in s.value)
     bill_no = re.search(r"Issued (\S+)", ok).group(1)
 
     store = _store()
@@ -303,8 +303,9 @@ def test_tc49_sample_data_is_complete_and_consistent():
     c = sqlite3.connect(db_path(DATA_DIR))
     for iid in reg.load_directory():
         covered = sum(b["count"] for b in reg.load_file(iid)["batches"])
-        ledger = c.execute("SELECT COUNT(*) FROM bills WHERE issuer_id=? AND published=1", (iid,)).fetchone()[0]
-        assert covered == ledger, iid
+        ledger = (c.execute("SELECT COUNT(*) FROM bills WHERE issuer_id=? AND published=1", (iid,)).fetchone()[0]
+                  + c.execute("SELECT COUNT(*) FROM summaries WHERE issuer_id=? AND published=1", (iid,)).fetchone()[0])
+        assert covered == ledger, iid          # every published bill AND discharge summary has its codes
 
 
 def test_tc50_presenter_switches_roles_and_resets():
@@ -560,7 +561,7 @@ def test_tc58_there_is_exactly_one_place_to_upload_a_bill():
 
     names = zipfile.ZipFile(DATA_DIR / "TrustLadder_sample_bills.zip").namelist()
     assert len([n for n in names if n.endswith(".pdf")]) == 6
-    assert len([n for n in names if n.endswith(".jpg")]) == 2, "two photographs: English and Marathi"
+    assert len([n for n in names if n.endswith(".jpg")]) == 4, "two photographs and two scanned discharge summaries"
     assert any(n.endswith("README.txt") for n in names)
 
 
@@ -595,7 +596,7 @@ def test_tc60_the_forgery_is_made_by_the_forger_not_the_hospital():
     at = _login("hospital")
     at.button(key="h_issue").click().run()
     labels = [b.label for b in at.get("download_button")]
-    assert labels == ["Download the bill (PDF)"], labels
+    assert labels == ["Download the bill (PDF)", "Download the discharge summary (PDF)"], labels
     assert "tampered" not in _texts(at).lower()
     assert not [e for e in at.get("expander") if "toolkit" in (e.label or "").lower()]
 
@@ -968,11 +969,18 @@ def test_tc74_risk_head_sees_the_reading_models_error_rate():
     open the risk head's dashboard.
     Expected: a fourth tile '1 of 2 photo readings the customer corrected', worded as the
     vision model's error rate."""
+    before = _store().measures()
     _picture_claim("CUST-003")
     _picture_claim("CUST-004", {"patient": "Meera Kulkarnee"})
+    m = _store().measures()
+    # The seeded blurred scan counts as a picture claim only where the local OCR package
+    # is installed, so the tile is checked against the store, not a fixed number.
+    assert (m["picture_claims"], m["readings_corrected"]) == (before["picture_claims"] + 2,
+                                                              before["readings_corrected"] + 1)
     at = _login("riskhead")
     texts = _texts(at)
-    assert "1 of 2" in texts and "photo readings the customer corrected" in texts
+    assert f"{m['readings_corrected']} of {m['picture_claims']}" in texts
+    assert "photo readings the customer corrected" in texts
     assert "vision model's error rate" in texts
 
 
@@ -1023,3 +1031,60 @@ def test_tc76_a_photo_the_issuer_contradicts_is_sent_back_for_the_original_not_h
     assert _verdict(at) == "Inconclusive"
     texts = _texts(at)
     assert "not corroborated" in texts and "Mismatch" in texts
+
+
+# ---------------------------------------------------------------- the claim packet on screen (TC-77 .. TC-79)
+
+def test_tc77_hospital_issues_the_bill_and_the_discharge_summary_together():
+    """TC-77. Steps: hospital → Issue a bill; press the issue button; then My bills.
+    Expected: one press issues both documents, names both tickets, offers both PDFs;
+    the registry batch has two entries; My bills lists the summary under its own heading."""
+    at = _login("hospital")
+    at.button(key="h_issue").click().run()
+    texts = _texts(at)
+    ok = " ".join(x.value for x in at.success)
+    assert "Issued SMH/" in ok and "discharge summary" in ok
+    assert [b.label for b in at.get("download_button")] == ["Download the bill (PDF)",
+                                                             "Download the discharge summary (PDF)"]
+    reg = RegistryStore(DATA_DIR).load_file("IN-HOSP-SAHYOG-PUN-0101")
+    assert reg["batches"][-1]["count"] == 1 and reg["batches"][-2]["count"] == 1  # one batch per document
+    at = _go(at, "hospital", "My bills")
+    assert "Discharge summaries issued" in _texts(at)
+    assert any("Summary no" in str(df.value.columns.tolist()) for df in at.dataframe)
+
+
+def test_tc78_customer_packet_needs_a_bill_and_submits_once():
+    """TC-78. Steps: customer → Submit a claim with nothing attached.
+    Expected: one multi-file uploader, Submit disabled, the wording asks for the bill
+    and the discharge summary together; no second uploader anywhere."""
+    at = _go(_login("customer"), "customer", "Submit a claim")
+    ups = at.get("file_uploader")
+    assert len(ups) == 1 and "bill and discharge summary" in ups[0].label
+    assert at.button(key="cs_submit").disabled
+    assert "discharge summary" in _texts(at)
+
+
+def test_tc79_officer_sees_the_packets_second_document_and_the_cross_document_finding():
+    """TC-79. Steps: submit bill 4 with the mismatched discharge summary; open it as the
+    officer.
+    Expected: Suspicious; 'What was found' lists the bill outside the stay and the surgery
+    billed with no operation; the panel 'The discharge summary in this packet' shows the
+    summary with 'Registry: Not covered' and its stay dates; a claim with no summary says
+    so."""
+    from trustladder.cases import SUMMARY_DATES_MISMATCH
+    ds2 = _store().summary_pdf(SUMMARY_DATES_MISMATCH.summary_no)
+    cid = submit_claim(_store(), Verifier(RegistryStore(DATA_DIR)), "CUST-001",
+                       (DATA_DIR / "showcase" / "04_genuine_hospital_not_joined.pdf").read_bytes(), "04.pdf",
+                       attachments=[(ds2, "summary.pdf", None)])
+    at = _login("officer")
+    _open_claim(at, cid)
+    assert _verdict(at) == "Suspicious"
+    texts = _texts(at)
+    assert "in hospital from 12 Mar 2026 to 15 Mar 2026" in texts
+    assert "records no operation" in texts
+    assert "The discharge summary in this packet" in texts and "Registry: Not covered" in texts
+    assert "SCM/DS/2026/000412" in texts
+    other = next(c for c in _queue() if c["claim_id"] != cid)
+    at = _login("officer")
+    _open_claim(at, other["claim_id"])
+    assert "No discharge summary was attached" in _texts(at)
