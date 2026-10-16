@@ -10,11 +10,16 @@ The story (signed in as the presenter, who steps through the six screens):
   1  Hospital      issues a bill; the genuine PDF is downloaded
   2  Customer      uploads that PDF on the one upload screen: Paid. The customer is
                    shown the STATUS of their claim, never the verdict or the findings;
-                   then, on that SAME screen, the bill is edited in the demo toolkit
-                   (the forger's editor, which needs no upload of its own) and the
-                   edited copy is uploaded: Tampered
+                   then a PHOTO of a bill printed in Marathi: the vision model reads
+                   it, the customer confirms what it read, and it is Paid on the
+                   hospital's proof (or, with the hosted models off, sent back for
+                   the original: the screen says which reader ran); then, on that
+                   SAME screen, the bill is edited in the demo toolkit (the forger's
+                   editor, which needs no upload of its own) and the edited copy is
+                   uploaded: Tampered
   3  Officer       a QUEUE of pending claims; opens the top one (same bill number),
-                   sees WHAT was found, and rejects it
+                   sees WHAT was found, how the bill was read, how the evidence was
+                   gathered (the agent's trace), and rejects it
   4  Risk head     impact dashboard; a separate what-if as hospitals join
   5  Registry      the network; a forged line is rejected
   6  Auditor       the trail of everything above; the rule and the AI architecture
@@ -196,7 +201,7 @@ def main() -> None:
 
         # 2. The customer uploads that bill
         next_step()
-        expect_text(pg, "Your bill (PDF)", "step 2: customer upload screen")
+        expect_text(pg, "Your bill (PDF, or a photo", "step 2: customer upload screen takes a PDF or a photo")
         # scope to the main area: the presenter's sidebar toolkit also has an upload box
         pg.locator("[data-testid='stMain'] input[type='file']").first.set_input_files(str(genuine))
         settle(pg)
@@ -220,6 +225,55 @@ def main() -> None:
         expect_claim_status(pg, "Paid", "step 2: the customer's own bill, paid on proof")
         pg.wait_for_timeout(READ)
         still(pg, "customer_upload")
+
+        # Second upload, same screen: a PHOTO of a bill printed in Marathi. The vision
+        # model reads it, the customer checks the reading and confirms, and the hospital's
+        # record confirms the photo. With the hosted models off (no key on this server)
+        # the honest path is shown instead: the reading form says no model answered and
+        # the claim is sent back for the original.
+        models_on = "Hosted AI models: on" in pg.inner_text("body")
+        with pg.expect_download() as d3:
+            pg.get_by_role("button", name="Download sample bills (zip)").click()
+        import zipfile as _zip
+        pack = Path(BUILD / "demo_files" / d3.value.suggested_filename)
+        d3.value.save_as(str(pack))
+        with _zip.ZipFile(pack) as z:
+            member = next(n for n in z.namelist() if n.endswith("08_marathi_bill_photo.jpg"))
+            photo = pack.parent / "08_marathi_bill_photo.jpg"
+            photo.write_bytes(z.read(member))
+        pg.locator("[data-testid='stMain'] input[type='file']").first.set_input_files(str(photo))
+        settle(pg)
+        pg.wait_for_selector("text=These are the details on my bill", timeout=SLOW)
+        body = pg.inner_text("body")
+        if models_on and "Here is what the vision model read from your photo" not in body:
+            # Say what the screen DID show before failing: usually the hosted model's
+            # quota or capacity, which is a deployment fact the presenter must know.
+            shown = next((ln for ln in body.splitlines() if "read" in ln.lower() and "model" in ln.lower()), "")
+            print(f"TC-30 note: the reading form said: {shown[:160]!r}")
+        if models_on:
+            expect_text(pg, "Here is what the vision model read from your photo",
+                        "step 2: the vision model read the photo")
+            expect_text(pg, "Marathi", "step 2: the language of the printed bill is named")
+            expect_text(pg, "SMH/2026/004877", "step 2: the bill number was read from the photo")
+        else:
+            expect_text(pg, "no reading model is configured",
+                        "step 2: with models off, the screen says no model read the photo")
+        if pg.get_by_role("button", name="Submit claim").is_enabled():
+            raise SystemExit("TC-30 FAILED: step 2: a photo could be submitted before it was confirmed")
+        print("TC-30 pass: step 2: a photo cannot be submitted until the customer confirms the reading")
+        pg.get_by_text("These are the details on my bill").click()
+        settle(pg)
+        still(pg, "customer_photo_reading")
+        pg.get_by_role("button", name="Submit claim").click()
+        settle(pg)
+        if models_on:
+            expect_claim_status(pg, "Paid", "step 2: a phone photo of a Marathi bill, paid on proof")
+            print("TC-30 pass: step 2: the photo was read by the vision model and paid on the hospital's proof")
+        else:
+            expect_claim_status(pg, "Waiting for customer", "step 2: unread photo sent back for the original")
+            print("TC-30 pass: step 2: with models off, the photo is sent back for the original, never judged")
+        pg.wait_for_timeout(READ)
+        still(pg, "customer_photo")
 
         # Still step 2, same screen, same button: the forger edits that bill in the demo
         # toolkit and the SAME customer uploads the edited copy here. No step change,
@@ -247,6 +301,7 @@ def main() -> None:
         pg.wait_for_timeout(READ)
         still(pg, "customer_tampered")
 
+
         # 3. The officer works a queue: nothing is open until a claim is chosen.
         next_step()
         expect_text(pg, "Waiting for a decision", "step 3: the inbox is a queue of pending claims")
@@ -260,8 +315,18 @@ def main() -> None:
         expect_verdict(pg, "Tampered", "step 3: the claim the officer opened")
         expect_text(pg, "bill SMH/", "step 3: the same bill number")
         expect_text(pg, "What was found", "step 3: the officer can see WHY, without any switch")
+        expect_text(pg, "Read from the PDF's text layer", "step 3: how the bill was read is stated")
+        expect_text(pg, "How the evidence was gathered", "step 3: the agent's trace is on screen")
+        expect_text(pg, "Asked the issuer's registry", "step 3: the trace names the checks in words")
+        if "Reason written by the language model" not in pg.inner_text("body") and \
+           "Reason assembled from fixed sentences" not in pg.inner_text("body"):
+            raise SystemExit("TC-30 FAILED: step 3: the reason does not say who wrote it")
+        print("TC-30 pass: step 3: the reason says whether a model or the template wrote it")
         pg.wait_for_timeout(READ)
         still(pg, "officer_claim")
+        scroll(pg, 700)
+        still(pg, "officer_evidence_trace")
+        top(pg)
         pg.get_by_role("button", name="Reject as fraud").first.click()
         settle(pg)
         # the officer must be able to SEE what they just did
@@ -308,6 +373,9 @@ def main() -> None:
         pg.wait_for_timeout(READ)
         still(pg, "audit_trail")
         menu(pg, "How decisions are made")
+        expect_text(pg, "The models around the rule", "step 6: the model registry is published")
+        expect_text(pg, "Vision-language reader", "step 6: the registry names the reading model")
+        still(pg, "auditor_models")
         pg.get_by_text("The AI architecture around the rule").click()
         pg.wait_for_timeout(1500)
         scroll(pg, 520)

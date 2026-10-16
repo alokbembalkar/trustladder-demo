@@ -23,6 +23,7 @@ from pathlib import Path
 
 import streamlit as st
 
+from trustladder import llm
 from trustladder.cases import DATA_DIR
 from trustladder.registry import RegistryStore, Verifier
 from trustladder.seed import build_and_snapshot, db_path, restore_snapshot
@@ -108,12 +109,15 @@ STEPS = [
      "No patient data leaves the hospital."),
     ("customer", "Submit a claim", "Customer uploads",
      "**First**, upload the bill you just downloaded and press **Submit claim**. "
-     "**Then**, in the sidebar open **Demo toolkit**, press **Download the edited copy**, upload "
-     "that copy in the same box and press **Submit claim** again.",
-     "One screen takes every bill, and the customer never says which kind it is. The first is "
-     "confirmed by the hospital's own record, so it is paid at once with no officer involved. The "
-     "second is the same bill with a bigger total, so the record disagrees and it is held for a "
-     "person."),
+     "**Then** press **Download sample bills**, upload the photo **08_marathi_bill_photo.jpg**, "
+     "check what the vision model read, tick the box and submit. "
+     "**Last**, open **Demo toolkit** in the sidebar, press **Download the edited copy**, and upload "
+     "that.",
+     "One screen takes every bill, and the customer never says which kind it is. The first is a PDF, "
+     "read exactly and confirmed by the hospital's own record, so it is paid at once with no officer "
+     "involved. The second is a photograph of a bill printed in Marathi: a vision model reads it in "
+     "Marathi, shows the customer what it read, and the hospital's record confirms it, so a photo "
+     "from a phone is paid on proof. The third really was edited, and it is held."),
     ("officer", "Claims inbox", "Officer decides",
      "Open the top claim (the edited bill) and press **Reject as fraud**.",
      "Only claims that could not be proven reach a person, and they arrive with the reason and the "
@@ -241,7 +245,11 @@ with st.sidebar:
     if st.button("Sign out", key="logout"):
         st.session_state.clear()
         st.rerun()
+    # Every role can see whether the hosted models are on. A sentence a model wrote is
+    # labelled where it appears; this is the deployment-wide answer.
     st.caption("Demo system · synthetic data")
+    state, note = llm.status()
+    st.caption(f"Hosted AI models: **{state}** · {note}")
 
 if is_presenter:
     guide_bar()

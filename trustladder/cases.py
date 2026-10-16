@@ -23,8 +23,8 @@ import random
 import shutil
 from pathlib import Path
 
-from .bills import (random_bill, render_altered, render_fabricated, render_genuine,
-                    render_resaved, render_scan)
+from .bills import (random_bill, render_altered, render_discount_resaved, render_fabricated,
+                    render_genuine, render_resaved, render_scan)
 from .models import BillFields, LineItem
 from .pipeline import run_ladder
 from .registry import Publisher, RegistryStore, Verifier
@@ -47,8 +47,8 @@ HOSPITALS = {
 # In the showcase only the first two have joined.
 SHOWCASE_JOINED = ["IN-HOSP-SAHYOG-PUN-0101", "IN-HOSP-AROGYA-NSK-0233"]
 
-# The six prepared bills are ONE coherent set: the same patient throughout, and every
-# file is explicitly related to the first, so a viewer can see what changed and why.
+# The seven prepared bills are ONE coherent set: the same patient throughout, and every
+# file is explicitly related to another, so a viewer can see what changed and why.
 SHOWCASE = [
     # (file, title, what it shows, expected verdict)
     ("01_genuine_bill.pdf", "Genuine bill (hospital has joined)",
@@ -69,11 +69,40 @@ SHOWCASE = [
     ("06_made_from_nothing_not_joined.pdf", "Made from nothing, hospital not joined",
      "The honest gap: with no issuer to ask, a clean fake cannot be told from a genuine bill. It is "
      "still never cleared.", "Inconclusive"),
+    ("07_genuine_discounted_and_resaved.pdf", "GENUINE, discounted, then re-saved by a phone app",
+     "Bill 4 with a discount the hospital gave, in a file the patient's phone app re-saved. Nothing "
+     "was tampered with, but it carries both signatures an edit leaves: the total no longer matches "
+     "the printed charges, and the file was written twice. Edit-detection tools call this tampered "
+     "and hold an honest customer. The trained screening model recognises an ordinary re-save, so "
+     "the file history is shown and not counted, and it goes to a person instead of being held.",
+     "Suspicious"),
 ]
 
 # The patient on the prepared bills. The seeder passes the demo policyholder's name so
 # that the sample bills, the ledger and the seeded claims all agree.
 SHOWCASE_PATIENT = "Meera Kulkarni"
+
+# The Marathi bill: a printout whose labels are in Marathi, photographed by the patient.
+# Its fields are fixed here because two things are made from them and must agree: the
+# picture (tools/make_marathi_sample.py, rendered by a browser because reportlab cannot
+# shape Devanagari) and the registry entry the seeder publishes under the hospital's
+# key. Names and codes are in Latin letters, as Indian hospital software prints them.
+MARATHI_BILL = BillFields(
+    "IN-HOSP-SAHYOG-PUN-0101", "Sahyog Multispeciality Hospital", "SMH/2026/004877", "2026-03-05",
+    SHOWCASE_PATIENT,
+    [LineItem("Room charges (semi-private)", 2400000), LineItem("Surgeon fee", 5500000),
+     LineItem("Pharmacy and consumables", 1825000), LineItem("Laboratory investigations", 640000)],
+    10365000, "SH-WTKU-SZUF-7M7G-ARRC")
+MARATHI_LABELS = {
+    "issuer_name": "सह्योग मल्टीस्पेशालिटी हॉस्पिटल",
+    "issuer_id": "जारीकर्ता आयडी", "title": "अंतिम आंतररुग्ण बिल", "bill_no": "बिल क्रमांक",
+    "bill_date": "बिल दिनांक", "patient": "रुग्ण", "ticket": "तिकीट",
+    "ticket_note": "हे बिल TrustLadder नोंदणीद्वारे रुग्णालयाकडून पडताळता येते.",
+    "description": "विवरण", "amount": "रक्कम (रु)", "total": "एकूण",
+    "items": ["खोली शुल्क (सेमी-प्रायव्हेट)", "शल्यचिकित्सक शुल्क", "औषधे आणि उपभोग्य वस्तू",
+              "प्रयोगशाळा तपासण्या"],
+    "footer": "IIM-V कॅपस्टोन प्रात्यक्षिकासाठी तयार केलेला कृत्रिम दस्तऐवज (गट 7). हे खरे बिल नाही.",
+}
 
 
 def _headline_bill(ticket: str, patient: str) -> BillFields:
@@ -104,10 +133,10 @@ def _enrol(store: RegistryStore, ids: list[str], when: str = SHOWCASE_JOINED_ON)
 
 
 def build_showcase(data_dir: Path = DATA_DIR, patient: str = SHOWCASE_PATIENT) -> Path:
-    """Create the showcase registry and the six prepared bills. Returns the folder.
+    """Create the showcase registry and the seven prepared bills. Returns the folder.
 
-    All six are for the SAME patient, and files 2 and 5 are the same bill as file 1
-    (edited, and photographed), so the set explains itself.
+    All seven are for the SAME patient. Files 2 and 5 are file 1 edited and photographed;
+    file 7 is file 4 discounted and re-saved. The set explains itself.
     """
     store = RegistryStore(data_dir)
     _enrol(store, SHOWCASE_JOINED)
@@ -146,6 +175,10 @@ def build_showcase(data_dir: Path = DATA_DIR, patient: str = SHOWCASE_PATIENT) -
     fake2 = random_bill(rng, "IN-HOSP-SHANTI-STR-0419", name, bp, 1203, "2026-03-09")
     fake2.patient = patient
     (out / SHOWCASE[5][0]).write_bytes(render_fabricated(fake2, joined=False))
+
+    # 7. Bill 4 again: genuine, discounted by the hospital, then re-saved by a phone app.
+    #    The case the written checks get wrong and the trained model gets right.
+    (out / SHOWCASE[6][0]).write_bytes(render_discount_resaved(shanti))
 
     # Every bill the showcase PUBLISHED, so the hospital's ledger and the registry agree.
     (out / "published_bills.json").write_text(json.dumps(

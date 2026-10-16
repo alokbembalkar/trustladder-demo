@@ -92,6 +92,29 @@ def apply_css() -> None:
              font-size:0.78rem; display:flex; align-items:center; justify-content:center; }}
   .tl-comp.built {{ background:{TEAL}; color:white; border:1.5px solid {TEAL}; }}
   .tl-comp.target {{ background:white; color:{TEAL}; border:1.5px dashed {TEAL}; }}
+  /* the model-written parts, labelled wherever they appear */
+  .tl-who {{ font-size:0.88rem; color:{MUTED}; margin:-4px 0 12px 0; line-height:1.45; }}
+  .tl-who b {{ color:{INK}; }}
+  .tl-who .ai, .tl-read .ai {{ display:inline-block; background:#7C3AED; color:white; border-radius:999px;
+                 padding:0 7px; font-size:0.7rem; font-weight:800; margin-right:4px; vertical-align:middle; }}
+  .tl-note {{ background:#F5F3FF; border-left:3px solid #7C3AED; border-radius:6px; padding:10px 14px;
+             margin:4px 0 12px 0; font-size:0.98rem; line-height:1.5; color:{INK}; }}
+  .tl-trace {{ display:flex; gap:12px; padding:8px 0; border-bottom:1px solid #F1F5F9; }}
+  .tl-trace .n {{ width:22px; height:22px; border-radius:50%; background:{INK}; color:white; flex:none;
+                 font-size:0.75rem; font-weight:800; display:flex; align-items:center; justify-content:center; margin-top:2px; }}
+  .tl-trace .h {{ font-weight:700; color:{INK}; }}
+  .tl-trace .why {{ font-style:italic; color:{MUTED}; font-size:0.9rem; }}
+  .tl-trace .res {{ font-size:0.92rem; color:{INK}; margin-top:2px; }}
+  /* the customer's reading form */
+  .tl-read {{ background:#F8FAFC; border:1px solid #E2E8F0; border-radius:10px; padding:12px 16px; margin-bottom:8px; }}
+  .tl-read .t {{ font-weight:700; color:{INK}; font-size:1.0rem; }}
+  .tl-read .s {{ color:{MUTED}; font-size:0.86rem; margin-top:2px; }}
+  .tl-conf {{ display:inline-block; border-radius:999px; padding:0 8px; font-size:0.72rem; font-weight:700;
+             color:white; margin-left:6px; vertical-align:middle; }}
+  .tl-table {{ width:100%; border-collapse:collapse; font-size:0.84rem; }}
+  .tl-table th {{ text-align:left; border-bottom:1px solid #CBD5E1; padding:6px 6px; color:{MUTED};
+                 font-size:0.76rem; text-transform:uppercase; letter-spacing:0.3px; }}
+  .tl-table td {{ vertical-align:top; padding:8px 6px; border-bottom:1px solid #F1F5F9; }}
 </style>""", unsafe_allow_html=True)
 
 

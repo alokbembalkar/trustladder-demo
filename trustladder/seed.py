@@ -25,9 +25,9 @@ import random
 import shutil
 from pathlib import Path
 
-from .bills import (random_bill, render_altered, render_discount_resaved, render_fabricated,
+from .bills import (photo_of, random_bill, render_altered, render_discount_resaved, render_fabricated,
                     render_genuine, render_resaved, render_scan)
-from .cases import DATA_DIR, HOSPITALS, build_showcase, build_simulation
+from .cases import DATA_DIR, HOSPITALS, MARATHI_BILL, ROOT, build_showcase, build_simulation
 from .models import BillFields
 from .reader import read_bill
 from .registry import RegistryStore, Verifier
@@ -79,14 +79,25 @@ def _bill_for(rng, issuer_id, customer, serial, day) -> BillFields:
     return b
 
 
-# The pack people download is exactly the showcase set, with its own descriptions.
+# The pack people download: what the demo's patient has on her phone. The PDFs are the
+# bills hospitals sent her; the two JPEGs are photographs she took of printed bills.
+# "Expected" is what happens the FIRST time each file is claimed on her policy.
 SAMPLE_PACK = [
     ("01_genuine_bill.pdf", "Bill 1: genuine, from a hospital that has joined", "Authentic"),
     ("02_same_bill_total_raised.pdf", "Bill 1 with its total raised afterwards (same bill number)", "Tampered"),
     ("03_made_from_nothing.pdf", "Same patient and hospital, but a bill the hospital never issued", "Tampered"),
     ("04_genuine_hospital_not_joined.pdf", "Genuine, from a hospital that has not joined", "Inconclusive"),
-    ("05_photo_of_bill_1.pdf", "A blurred phone photo of bill 1", "Inconclusive"),
+    ("05_photo_of_arogya_bill.jpg",
+     "A phone PHOTO of her genuine Arogya bill. Read by the vision model; the hospital confirms it.",
+     "Authentic"),
     ("06_made_from_nothing_not_joined.pdf", "A fake from a hospital that has not joined", "Inconclusive"),
+    ("07_genuine_discounted_and_resaved.pdf",
+     "GENUINE: bill 4 with a hospital discount, re-saved by a phone app. Looks edited, is not.",
+     "Suspicious"),
+    ("08_marathi_bill_photo.jpg",
+     "A phone PHOTO of a genuine Sahyog bill printed in Marathi. The vision model reads it in "
+     "Marathi; the hospital confirms it.",
+     "Authentic"),
 ]
 
 
@@ -95,15 +106,19 @@ def build_sample_pack(data_dir: Path = DATA_DIR) -> Path:
     import zipfile
     out = Path(data_dir) / "sample_bills"
     out.mkdir(parents=True, exist_ok=True)
-    readme = ["TrustLadder sample bills (synthetic: fictional hospital, patient and amounts).",
-              "All six are for the same patient. Files 2 and 5 are the same bill as file 1, edited and",
-              "photographed, so you can see exactly what changed.",
-              "Upload any of these in the portal at Customer -> Submit a claim: that one screen takes",
-              "a genuine bill or a tampered one and checks both the same way.",
+    readme = ["TrustLadder sample bills (synthetic: fictional hospitals, one patient, invented amounts).",
+              "This is what the demo's patient, Meera Kulkarni, has on her phone: PDFs her hospitals",
+              "sent her, and two photographs she took of printed bills (05 and 08). File 2 is file 1",
+              "edited; file 7 is file 4 after a hospital discount and a phone app re-save.",
+              "Upload any of these in the portal at Customer -> Submit a claim: that one screen takes a",
+              "PDF or a photo, genuine or tampered, and checks every one the same way. A photo is read by",
+              "a vision model and the details are shown to you to confirm before you submit.",
+              "The expected result is for the FIRST claim of each bill; a bill claimed twice goes to a",
+              "person, never paid twice automatically.",
               ""]
     for name, what, expected in SAMPLE_PACK:
         (out / name).write_bytes((Path(data_dir) / "showcase" / name).read_bytes())
-        readme.append(f"{name}\n    {what}\n    Expected verdict: {expected}\n")
+        readme.append(f"{name}\n    {what}\n    Expected: {expected}\n")
     (out / "README.txt").write_text("\n".join(readme))
     zip_path = Path(data_dir) / "TrustLadder_sample_bills.zip"
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
@@ -119,10 +134,10 @@ def build_world(data_dir: Path = DATA_DIR) -> Store:
         shutil.rmtree(data_dir)
     data_dir.mkdir(parents=True)
 
-    # 1. The six sample bills and the simulated month (unchanged from before).
+    # 1. The prepared bills and the simulated month. The sample pack is zipped at the
+    #    end, once the two photographs below exist.
     build_showcase(data_dir, patient=CUSTOMERS[0][1])   # the prepared bills belong to this policyholder
     build_simulation(data_dir)
-    build_sample_pack(data_dir)
 
     registry = RegistryStore(data_dir)
     verifier = Verifier(registry)
@@ -169,7 +184,23 @@ def build_world(data_dir: Path = DATA_DIR) -> Store:
     #    a second bill she holds: an Arogya bill, issued and published, never claimed. It is
     #    the "original" she can send if a claim of hers is ever sent back for a clearer copy.
     ab = _bill_for(rng, "IN-HOSP-AROGYA-NSK-0233", meera, 3301, 8)
-    issue_bill(store, registry, verifier, ab, meera[0], "Arogya billing", "2026-03-08 16:05")
+    arogya_pdf = issue_bill(store, registry, verifier, ab, meera[0], "Arogya billing", "2026-03-08 16:05")
+    #    the photograph she took of that Arogya bill's printout: the vision model's English case
+    (showcase / "05_photo_of_arogya_bill.jpg").write_bytes(photo_of(arogya_pdf, seed=5))
+    #    and a third bill: Sahyog's Marathi printout, which she photographed. The hospital's
+    #    own copy is its system PDF (English, as its software prints); the picture is what the
+    #    customer holds. Both carry the same fields, so the registry confirms the picture.
+    mb = BillFields(**{**MARATHI_BILL.__dict__, "items": list(MARATHI_BILL.items)})
+    issue_bill(store, registry, verifier, mb, meera[0], "Sahyog billing", "2026-03-05 12:40")
+    marathi_photo = ROOT / "assets" / "samples" / "marathi_bill_photo.jpg"
+    if marathi_photo.exists():
+        (showcase / "08_marathi_bill_photo.jpg").write_bytes(marathi_photo.read_bytes())
+    else:
+        # A checkout without the asset (it is made by tools/make_marathi_sample.py on a
+        # machine with a browser): fall back to a photo of the English system copy, so the
+        # pack is complete and the demo never breaks on a missing file.
+        (showcase / "08_marathi_bill_photo.jpg").write_bytes(photo_of(store.bill_pdf(mb.bill_no), seed=8))
+    build_sample_pack(data_dir)
 
     # 3. Everyone else: joined hospitals issue and publish; customers claim.
     serial = 5000

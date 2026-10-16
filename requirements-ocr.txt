@@ -1,0 +1,10 @@
+# The optional second reader (trustladder/ocr.py): a local deep OCR model.
+#
+#   pip install -r requirements-ocr.txt
+#
+# Kept out of requirements.txt because the ONNX runtime is a few hundred megabytes,
+# more than the free hosting tier can carry. Without it the demo still runs: a
+# picture is read by the vision model alone, can be cleared by the registry, and is
+# sent back for the original rather than condemned (rule R7).
+rapidocr-onnxruntime>=1.3.0
+numpy

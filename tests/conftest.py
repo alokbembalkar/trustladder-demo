@@ -13,6 +13,10 @@ from pathlib import Path
 
 _TMP = Path(tempfile.mkdtemp(prefix="trustladder_test_"))
 os.environ["TRUSTLADDER_DATA"] = str(_TMP / "data")
+# No test ever calls a hosted model: the suite must pass offline, deterministically,
+# and without spending anyone's quota. The model paths are tested with stubs.
+os.environ["TRUSTLADDER_MODELS"] = "off"
+os.environ.pop("GEMINI_API_KEY", None)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pytest  # noqa: E402

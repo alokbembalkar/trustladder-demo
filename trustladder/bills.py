@@ -305,6 +305,39 @@ def render_scan(bill: BillFields, *, joined: bool, seed: int = 7) -> bytes:
                          modified=issued_at + _dt.timedelta(days=2))
 
 
+def photo_of(pdf_bytes: bytes, *, seed: int = 5, quality: int = 72) -> bytes:
+    """A phone photograph of a printed bill, as a JPEG.
+
+    This is what a customer actually has: the hospital handed over a printout, and
+    the phone took a picture of it. The page is rendered from the PDF and then given
+    the marks a real photo carries: a slight tilt, uneven light, sensor noise and
+    JPEG compression. It stays legible, because the point of this file is that the
+    vision model reads it; `render_scan` is the deliberately unreadable cousin.
+    """
+    import pypdfium2 as pdfium
+    from PIL import Image, ImageEnhance, ImageFilter
+
+    rng = random.Random(seed)
+    page = pdfium.PdfDocument(pdf_bytes)[0]
+    img = page.render(scale=1.9).to_pil().convert("RGB")
+    # Crop to the printed area with a paper-coloured margin, the way a photo frames a page.
+    w, h = img.size
+    img = img.crop((0, 0, w, int(h * 0.62)))
+    paper = Image.new("RGB", (img.width + 120, img.height + 120), (238, 234, 226))
+    paper.paste(img, (60, 60))
+    img = paper.rotate(rng.uniform(-1.8, 1.8), resample=Image.BICUBIC, fillcolor=(84, 78, 70), expand=True)
+    # Uneven light: a soft gradient across the page.
+    shade = Image.linear_gradient("L").resize(img.size).rotate(rng.uniform(0, 90), expand=False)
+    shade = ImageEnhance.Brightness(shade.convert("RGB")).enhance(0.35)
+    img = Image.blend(img, Image.composite(img, shade, shade.convert("L")), 0.25)
+    img = img.filter(ImageFilter.GaussianBlur(0.55))
+    noise = Image.effect_noise(img.size, 14).convert("RGB")
+    img = Image.blend(img, noise, 0.05)
+    out = io.BytesIO()
+    img.save(out, format="JPEG", quality=quality)
+    return out.getvalue()
+
+
 # --------------------------------------------------------------------------
 # Synthetic content
 # --------------------------------------------------------------------------

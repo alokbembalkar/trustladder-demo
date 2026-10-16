@@ -37,9 +37,10 @@ FONT = "Helvetica Neue, Helvetica, Arial, sans-serif"
 
 # Which components are AI models (tagged with the violet "AI" pill).
 AI_COMPONENTS = {
-    "Vision-language model reading", "Layout transformer (LayoutLM / Donut)", "Visual tamper models",
+    "Vision-language model reading", "Deep OCR second reader (local, optional)",
+    "Layout transformer (LayoutLM / Donut)", "Trained screening model", "Visual tamper models",
     "Generative-AI forgery detector", "Issuer knowledge graph", "Tool-calling evidence agent",
-    "LLM reason writer, GraphRAG over policy", "Feedback to retraining",
+    "LLM reason writer, grounded on the evidence graph", "Feedback to retraining",
 }
 
 
@@ -210,8 +211,13 @@ def build_svg() -> str:
         s.append(f'<rect x="{cx}" y="206" width="{colw}" height="38" rx="8" fill="#E2E8F0"/>')
         s.append(_text(cx + colw / 2, 222, title, 12.5, 800, INK, "middle"))
         s.append(_text(cx + colw / 2, 237, sub, 10, 400, MUTED, "middle", italic=True))
+        # Cards fit the column: the governance band starts at 540, so a column with six
+        # components (Detect) packs tighter than one with three.
+        n = len(layer["components"])
+        card_h = min(50, int((536 - 254 - (n - 1) * 8) / n))
+        pitch = card_h + 8
         for j, c in enumerate(layer["components"]):
-            s.append(card(cx, 254 + j * 58, colw, 50, c["label"]))
+            s.append(card(cx, 254 + j * pitch, colw, card_h, c["label"]))
     # arrows between columns (⑤ screen, ⑥ ask for proof)
     for i in range(4):
         a, b = xs[i] + colw, xs[i + 1]

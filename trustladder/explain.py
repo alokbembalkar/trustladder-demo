@@ -7,13 +7,19 @@ asked to write a short reason a held customer or an auditor can understand. Its
 output is then checked back against the findings, so it cannot add a claim the
 evidence does not support, and it can never change the verdict.
 
-To keep this demo small and fully offline, the reason is assembled from fixed
-sentences instead of a model. The inputs and the check-back contract are the
-same, so a model can replace `write_reason` without touching anything else.
+Two writers, one contract. `write_reason` assembles the reason from fixed sentences
+and always works, with no key, no network and no dependency. `write_reason_best`
+asks a language model first (see `reason_model`) and falls back to the written one
+if there is no key, if the call fails, or if the guardrail rejects what came back.
+
+Both go through the same `check_back`, and the caller is told which writer produced
+the text so the screen can say so. A reason the reader cannot trace to a writer is
+worse than a plain one.
 """
 
 from __future__ import annotations
 
+from . import reason_model
 from .decide import Decision
 from .models import CLAIM_HISTORY, Finding, RegistryAnswer, Verdict
 
@@ -65,3 +71,37 @@ def check_back(reason: str, decision: Decision) -> bool:
     own = _OPENERS[decision.verdict]
     others = [o for v, o in _OPENERS.items() if v is not decision.verdict]
     return reason.startswith(own) and not any(o in reason for o in others)
+
+
+def write_reason_best(decision: Decision, registry: RegistryAnswer, registry_note: str,
+                      findings: list[Finding], read_note: str) -> tuple[str, str, str]:
+    """The reason, which writer produced it ("model" or "template"), and the model's name.
+
+    The model is asked first when a key is configured. Whatever comes back goes
+    through the same guardrail as the written reason, and anything that fails it is
+    thrown away rather than shown. There is no path by which a model's output reaches
+    a screen without passing the check that a written sentence has to pass.
+    """
+    written = write_reason(decision, registry, registry_note, findings, read_note)
+    if not reason_model.available():
+        return written, "template", ""
+
+    # Grounding: the findings grouped by independent family, plus the issuer's answer,
+    # which is the evidence graph the rule itself was applied to.
+    families: dict[str, list[str]] = {}
+    for f in findings:
+        families.setdefault(f.family + ("" if f.independent else " (shown, not counted)"), []).append(f.detail)
+    if registry is not RegistryAnswer.NOT_ASKED:
+        families["issuer registry"] = [registry_note]
+
+    drafted = reason_model.write(
+        opener=_OPENERS[decision.verdict],
+        verdict=decision.verdict.value,
+        rule_text=decision.rule_text,
+        registry_note=registry_note if registry is not RegistryAnswer.NOT_ASKED else read_note,
+        findings=[f.detail for f in findings],
+        families=families,
+    )
+    if drafted and check_back(drafted[0], decision):
+        return drafted[0], "model", drafted[1]
+    return written, "template", ""

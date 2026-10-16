@@ -211,12 +211,19 @@ class Store:
 
     def record_claim(self, customer_id: str, customer_name: str, file_name: str, pdf: bytes,
                      result: LadderResult, independent_against: int, bill_no: str = "",
-                     truth: str = "", submitted_at: str | None = None, actor: str = "") -> str:
-        """Store a submitted claim with TrustLadder's verdict; route it by the policy."""
+                     truth: str = "", submitted_at: str | None = None, actor: str = "",
+                     narrative_pending: bool = False) -> str:
+        """Store a submitted claim with TrustLadder's verdict; route it by the policy.
+
+        `narrative_pending` says the model-written reason and the agent's account are
+        still being produced in the background; `update_narrative` completes the record
+        and writes the "Models used" audit row then.
+        """
         action = self.policy()[result.verdict.value]
         status = STATUS_FOR_ACTION[action]
-        if result.rule_applied.startswith("R0") and action == REVIEW:
-            # an unreadable bill is the customer's to fix, not an officer's to judge
+        if result.rule_applied.startswith(("R0", "R7")) and action == REVIEW:
+            # an unreadable bill, or an uncorroborated reading the issuer contradicts, is
+            # the customer's to fix with the original, not an officer's to judge
             status = "Waiting for customer"
         if action == PAY and any(f.family == CLAIM_HISTORY for f in result.findings):
             # The document is genuine and the issuer proved it, so the VERDICT stays
@@ -230,23 +237,74 @@ class Store:
         claim_id = self.next_claim_id()
         issuer = self._issuer_for(result, bill_no)
         when = submitted_at or now()
+        report = result.read_report or {}
         with self._conn() as c:
             # The amount claimed is kept on the claim itself. The stored result drops the
             # bill's fields, so an officer's queue could not show what is being asked for.
             c.execute(
                 "INSERT INTO claims (claim_id, customer_id, customer_name, issuer_name, bill_no, "
                 "submitted_at, file_name, pdf, verdict, risk, rule, registry, evidence_grade, reason, "
-                "independent_against, initial_action, status, truth, total_paise, result_json) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "independent_against, initial_action, status, truth, total_paise, result_json, "
+                "read_source, read_corrections) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (claim_id, customer_id, customer_name, issuer, bill_no, when, file_name, pdf,
                  result.verdict.value, result.risk, result.rule_applied, result.registry_answer.value,
                  result.evidence_grade.value, result.reason, independent_against, action, status,
                  truth, result.fields.total_paise if result.fields else 0,
-                 json.dumps(_result_json(result))))
+                 json.dumps(_result_json(result)),
+                 report.get("source", "text layer"), int(report.get("corrections", 0) or 0)))
         self.log(actor or customer_name, "customer", "Claim submitted", claim_id, file_name, when)
+        if not narrative_pending:
+            self._log_models(claim_id, result, when)
         self.log("TrustLadder", "system", f"{result.verdict.value} ({result.rule_applied.split(':')[0]})",
                  claim_id, f"{action} → {status}", when)
+        if narrative_pending:
+            with self._conn() as c:
+                c.execute("UPDATE claims SET narrative_pending = 1 WHERE claim_id = ?", (claim_id,))
         return claim_id
+
+    def update_narrative(self, claim_id: str, result: LadderResult) -> None:
+        """The model-written reason and the agent's account arrive: complete the record.
+
+        The verdict, the rule, the findings and the status are NOT touched here, by
+        construction: `pipeline.narrate` returns them unchanged, and this writes only
+        the reason and the narrative fields.
+        """
+        with self._conn() as c:
+            c.execute("UPDATE claims SET reason = ?, result_json = ?, narrative_pending = 0 "
+                      "WHERE claim_id = ?",
+                      (result.reason, json.dumps(_result_json(result)), claim_id))
+        self._log_models(claim_id, result, None)
+
+    def _log_models(self, claim_id: str, result: LadderResult, when: str | None) -> None:
+        """One audit row naming every model that touched this claim, and how the bill was read.
+
+        A decision can only be replayed if the record says which model version read the
+        bill, which gathered the evidence and which wrote the reason. A text-layer read
+        with no model involved is logged too, so the absence of a model is on the record.
+        """
+        report = result.read_report or {}
+        parts = []
+        if report.get("source") == "vision model":
+            how = f"read from a picture by {result.models_used.get('reader', 'the reading model')}"
+            if report.get("language"):
+                how += f" ({report['language']})"
+            if report.get("customer_confirmed"):
+                how += f", customer confirmed, {report.get('corrections', 0)} correction(s)"
+            if report.get("second_reader"):
+                how += f", second reader {'agreed' if report.get('agree') else 'did not agree'}"
+            parts.append(how)
+        else:
+            parts.append("read from the PDF text layer, no model")
+        if result.models_used.get("agent"):
+            parts.append(f"evidence gathered by agent {result.models_used['agent']}")
+        elif result.agent_trace:
+            parts.append("evidence gathered in fixed order, no agent")
+        if result.models_used.get("reason"):
+            parts.append(f"reason written by {result.models_used['reason']}, checked back")
+        else:
+            parts.append("reason assembled from fixed sentences")
+        self.log("TrustLadder", "system", "Models used", claim_id, "; ".join(parts), when)
 
     def _issuer_for(self, result: LadderResult, bill_no: str) -> str:
         """The hospital's name: read from the bill, or from the linked bill in the ledger."""
@@ -264,7 +322,7 @@ class Store:
         """The customer sends a clearer copy for the same claim; it is judged afresh."""
         action = self.policy()[result.verdict.value]
         status = STATUS_FOR_ACTION[action]
-        if result.rule_applied.startswith("R0") and action == REVIEW:
+        if result.rule_applied.startswith(("R0", "R7")) and action == REVIEW:
             status = "Waiting for customer"
         old = self.claim(claim_id)
         issuer = self._issuer_for(result, old["bill_no"])
@@ -277,6 +335,7 @@ class Store:
                        result.registry_answer.value, result.evidence_grade.value, result.reason,
                        independent_against, action, status, json.dumps(_result_json(result)), claim_id))
         self.log(actor, "customer", "Clearer copy re-submitted", claim_id, file_name)
+        self._log_models(claim_id, result, None)
         self.log("TrustLadder", "system", f"{result.verdict.value} ({result.rule_applied.split(':')[0]})",
                  claim_id, f"{action} → {status}")
 
@@ -353,6 +412,10 @@ class Store:
         # Sample-data only: ground truth is known for the seeded claims.
         labelled = [r for r in rows if r["truth"]]
         frauds = [r for r in labelled if r["truth"] == "fraud"]
+        # The reading model's error rate, as an institution would measure it: pictures
+        # the customer had to correct before submitting.
+        pictures = [r for r in rows if r.get("read_source") == "vision model"]
+        corrected = sum((r.get("read_corrections") or 0) > 0 for r in pictures)
         return {
             "claims": n, "auto_paid": auto_paid,
             "straight_through_pct": round(100 * auto_paid / n) if n else 0,
@@ -362,6 +425,8 @@ class Store:
             "officer_hours": round(to_person * 15 / 60, 1),
             "sample_frauds": len(frauds),
             "sample_frauds_paid": sum(r["initial_action"] == PAY for r in frauds),
+            "picture_claims": len(pictures),
+            "readings_corrected": corrected,
         }
 
 
@@ -371,11 +436,15 @@ def result_from_json(d: dict) -> LadderResult:
     return LadderResult(
         file_name=d["file_name"], read_status=ReadStatus(d["read_status"]), fields=None,
         read_note=d["read_note"],
-        findings=[Finding(f["family"], f["check"], f["detail"]) for f in d["findings"]],
+        findings=[Finding(f["family"], f["check"], f["detail"], f.get("independent", True))
+                  for f in d["findings"]],
         registry_answer=RegistryAnswer(d["registry_answer"]), registry_note=d["registry_note"],
         verdict=Verdict(d["verdict"]), risk=d["risk"], evidence_grade=EvidenceGrade(d["evidence_grade"]),
-        rule_applied=d["rule_applied"], reason=d["reason"], needs_human=d["needs_human"],
-        queue=d["queue"], rule_version=d["rule_version"])
+        rule_applied=d["rule_applied"], reason=d["reason"],
+        reason_writer=d.get("reason_writer", "template"), needs_human=d["needs_human"],
+        queue=d["queue"], rule_version=d["rule_version"],
+        read_report=d.get("read_report") or {}, agent_trace=d.get("agent_trace") or [],
+        agent_note=d.get("agent_note", ""), models_used=d.get("models_used") or {})
 
 
 def _result_json(r: LadderResult) -> dict:
@@ -384,7 +453,8 @@ def _result_json(r: LadderResult) -> dict:
         "file_name": r.file_name,
         "read_status": r.read_status.value,
         "read_note": r.read_note,
-        "findings": [{"family": f.family, "check": f.check, "detail": f.detail} for f in r.findings],
+        "findings": [{"family": f.family, "check": f.check, "detail": f.detail,
+                      "independent": f.independent} for f in r.findings],
         "registry_answer": r.registry_answer.value,
         "registry_note": r.registry_note,
         "verdict": r.verdict.value,
@@ -392,9 +462,14 @@ def _result_json(r: LadderResult) -> dict:
         "evidence_grade": r.evidence_grade.value,
         "rule_applied": r.rule_applied,
         "reason": r.reason,
+        "reason_writer": r.reason_writer,
         "needs_human": r.needs_human,
         "queue": r.queue,
         "rule_version": r.rule_version,
+        "read_report": r.read_report,
+        "agent_trace": r.agent_trace,
+        "agent_note": r.agent_note,
+        "models_used": r.models_used,
     }
 
 
@@ -411,7 +486,9 @@ CREATE TABLE IF NOT EXISTS claims (
   submitted_at TEXT, file_name TEXT, pdf BLOB, verdict TEXT, risk TEXT, rule TEXT, registry TEXT,
   evidence_grade TEXT, reason TEXT, independent_against INTEGER, initial_action TEXT, status TEXT,
   officer_decision TEXT DEFAULT '', decided_by TEXT DEFAULT '', decided_at TEXT DEFAULT '',
-  truth TEXT DEFAULT '', total_paise INTEGER DEFAULT 0, result_json TEXT);
+  truth TEXT DEFAULT '', total_paise INTEGER DEFAULT 0, result_json TEXT,
+  read_source TEXT DEFAULT 'text layer', read_corrections INTEGER DEFAULT 0,
+  narrative_pending INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, actor TEXT, role TEXT, event TEXT,
   claim_id TEXT, detail TEXT);

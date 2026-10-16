@@ -38,11 +38,15 @@ class EvidenceGraph:
 def build(result: LadderResult) -> EvidenceGraph:
     """Group the result's evidence into independent families."""
     families: dict[str, list[str]] = {}
+    counts: set[str] = set()
     for f in result.findings:
         families.setdefault(f.family, []).append(f.detail)
+        if f.independent:
+            counts.add(f.family)
     if result.registry_answer is not RegistryAnswer.NOT_ASKED:
         families["issuer registry"] = [result.registry_note]
-    against = sorted(fam for fam in families if fam != "issuer registry")
+    # Shown, but not counted: a second opinion, or a signal the model called innocent.
+    against = sorted(fam for fam in counts if fam != "issuer registry")
     if result.registry_answer in _REGISTRY_AGAINST:
         against.append("issuer registry")
     return EvidenceGraph(

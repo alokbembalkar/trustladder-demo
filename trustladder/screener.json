@@ -1,0 +1,63 @@
+{
+  "_comment": "Trained by tools/train_screener.py on bills this repository generates. Logistic regression; apply by hand with the formula in screener.py.",
+  "features": [
+    "creator_differs",
+    "fonts",
+    "has_ticket",
+    "modified_later",
+    "revisions",
+    "size_kb",
+    "total_gap",
+    "total_gap_ratio"
+  ],
+  "coefficients": [
+    0.0,
+    2.8851251091061987,
+    0.7008815611083417,
+    0.0,
+    0.18007216564567896,
+    0.9375253765630119,
+    1.2700631429391356,
+    1.511735855545255
+  ],
+  "intercept": -2.9347924775035215,
+  "mean": [
+    0.0,
+    2.25,
+    0.74375,
+    0.0,
+    1.7428571428571429,
+    2.557420131138393,
+    1467805.7142857143,
+    0.09037888346875471
+  ],
+  "scale": [
+    1.0,
+    0.4330127018922193,
+    0.43656149337750644,
+    1.0,
+    0.43705881545081265,
+    0.25718922830239765,
+    2469671.5823240266,
+    0.13670808872616358
+  ],
+  "threshold": 0.6,
+  "trained_on": {
+    "bills": 1600,
+    "classes": [
+      "altered",
+      "fabricated",
+      "genuine",
+      "genuine_discounted",
+      "genuine_resaved"
+    ],
+    "held_out_entirely": "fabricated"
+  },
+  "measured": {
+    "auc_edited_vs_genuine": 1.0,
+    "auc_fabricated_vs_genuine": 0.5,
+    "edited_caught_at_threshold": 1.0,
+    "genuine_false_alarm_at_threshold": 0.0,
+    "fabricated_caught_at_threshold": 0.0
+  }
+}

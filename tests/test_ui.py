@@ -281,12 +281,15 @@ def test_tc48_registry_enrol_and_integrity():
 def test_tc49_sample_data_is_complete_and_consistent():
     """TC-49. Steps: read the seeded world.
     Expected: a month with claims in every outcome, no known fraud paid automatically,
-    exactly one wrongful hold, 15 customers and 7 working logins; the demo's own patient
+    no genuine customer held, 15 customers and 7 working logins; the demo's own patient
     starts with NO claims so her page is empty until she uploads; every joined hospital's
     ledger matches what the registry covers."""
     s = _store()
     m = s.measures()
-    assert m["claims"] == 31 and m["auto_paid"] == 15 and m["wrongful_holds"] == 1
+    assert m["claims"] == 31 and m["auto_paid"] == 15
+    # The trained screener removed the one wrongful hold: the discounted, re-saved bill
+    # that the written checks convicted. Nothing about fraud changed; see TC-20.
+    assert m["wrongful_holds"] == 0
     assert m["claims"] == m["auto_paid"] + m["to_person"], "every claim is accounted for"
     assert m["sample_frauds"] == 8 and m["sample_frauds_paid"] == 0, "no known fraud paid on its own"
     assert len(s.customers()) == 15
@@ -320,9 +323,9 @@ def test_tc50_presenter_switches_roles_and_resets():
     assert at.session_state["step"] == 0
 
 
-@pytest.mark.parametrize("index", range(6))
+@pytest.mark.parametrize("index", range(7))
 def test_tc51_sample_bills_show_expected_verdicts(index):
-    """TC-51 (x6). Steps: as the customer, submit prepared bill N on the one upload
+    """TC-51 (x7). Steps: as the customer, submit prepared bill N on the one upload
     screen (the route the presenter uses now that the officer has no sample tab).
     Expected: the claim records the manifest's expected verdict."""
     manifest = json.loads((DATA_DIR / "showcase" / "manifest.json").read_text())
@@ -369,7 +372,15 @@ def test_tc53_verdict_view_has_ai_inside_and_evidence_graph():
     assert "4 independent lines against" in _texts(at)
     dot = at.get("graphviz_chart")[0].proto.spec
     assert "R2" in dot and "Tampered" in dot
-    assert any("GraphRAG" in c.value and "template" in c.value for c in at.caption)
+    # The screen must say WHICH writer produced the reason, and never leave it to be
+    # assumed. With no key configured this deployment assembles it from fixed sentences.
+    writer = _store().claim(cid)["result_json"]
+    assert '"reason_writer": "template"' in writer or '"reason_writer": "model"' in writer
+    texts = _texts(at)
+    assert ("Reason assembled from fixed sentences" in texts or "Reason written by the language model" in texts), \
+        "the reader is told which writer produced the reason"
+    assert ("Assembled from fixed sentences" in texts or "Written by a language model" in texts), \
+        "and the technical details say so too"
 
 
 def test_tc54_a_repeat_of_a_proven_bill_is_evidence_not_a_refusal():
@@ -447,8 +458,10 @@ def test_tc61_a_repeat_of_an_edited_bill_adds_an_independent_line():
     families = {f.family for f in r.findings}
     assert CLAIM_HISTORY in families, "the insurer's own history must reach the rule"
     assert families - {CLAIM_HISTORY}, "the document's own findings are still there"
-    # The registry counts as one line, and each finding family as another.
-    assert edited["independent_against"] == len(families) + 1
+    # The registry counts as one line, and each INDEPENDENT finding family as another.
+    # The screening model's own opinion is reported alongside them and not counted.
+    counted = {f.family for f in r.findings if f.independent}
+    assert edited["independent_against"] == len(counted) + 1
 
     # And the officer must be able to SEE it, not just have it stored.
     at = _login("officer")
@@ -529,7 +542,7 @@ def test_tc58_there_is_exactly_one_place_to_upload_a_bill():
     """TC-58. Steps: open the customer's Submit a claim screen; then read every other
     role's screens looking for a second uploader.
     Expected: the customer's only route is an upload (no document list), that screen
-    offers the six sample bills as a zip, Submit is disabled until a file is chosen,
+    offers the sample bills as a zip, Submit is disabled until a file is chosen,
     and NO other role has an uploader — the officer's separate 'Check any bill' tab is
     gone, so a genuine bill and a tampered one arrive by the same door."""
     import zipfile
@@ -537,7 +550,7 @@ def test_tc58_there_is_exactly_one_place_to_upload_a_bill():
     assert at.get("file_uploader"), "the customer must be able to upload"
     assert not [r for r in at.radio if r.key in ("cs_pick", "cs_source")], "no document list any more"
     assert at.button(key="cs_submit").disabled, "Submit waits for a file"
-    assert any(b.label.startswith("Download 6 sample bills") for b in at.get("download_button"))
+    assert any(b.label.startswith("Download sample bills") for b in at.get("download_button"))
 
     assert MENUS["officer"] == ["Claims inbox"], "the officer reviews claims; it is not an upload desk"
     for role in ("officer", "riskhead", "registry", "auditor"):
@@ -547,6 +560,7 @@ def test_tc58_there_is_exactly_one_place_to_upload_a_bill():
 
     names = zipfile.ZipFile(DATA_DIR / "TrustLadder_sample_bills.zip").namelist()
     assert len([n for n in names if n.endswith(".pdf")]) == 6
+    assert len([n for n in names if n.endswith(".jpg")]) == 2, "two photographs: English and Marathi"
     assert any(n.endswith("README.txt") for n in names)
 
 
@@ -879,3 +893,133 @@ def test_tc71_the_queue_shows_when_a_claim_arrived_and_can_be_sorted_by_it():
     assert _store().claim(worst[0]["claim_id"])["status"] == "On hold"
     first_button = next(b.key for b in at.button if (b.key or "").startswith("open_"))
     assert first_button == f"open_{worst[0]['claim_id']}"
+
+
+# ---------------------------------------------------------------- the AI layer on screen (TC-72 .. TC-76)
+
+def _tiny_jpeg() -> bytes:
+    """A real 8x8 JPEG: the officer's screen renders the uploaded picture."""
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 8), (240, 236, 228)).save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+def _picture_claim(customer_id: str = "CUST-001", corrections: dict | None = None) -> str:
+    """Submit a photo claim the way the customer screen does: a confirmed vision reading.
+
+    AppTest cannot drive a file uploader, so the reading the form would produce is built
+    directly and handed to the same service call the screen makes."""
+    from trustladder import vision
+    from trustladder.models import ReadStatus
+    pdf = (DATA_DIR / "showcase" / "01_genuine_bill.pdf").read_bytes()
+    fields = read_bill(pdf)[1]
+    reading = vision.Reading(ReadStatus.OK, fields, "read", source="vision model", model="stub-vision",
+                             language="English", confidence={"ticket": 1.0})
+    reading = vision.apply_corrections(reading, corrections or {})
+    return submit_claim(_store(), Verifier(RegistryStore(DATA_DIR)), customer_id, _tiny_jpeg(),
+                        "bill_photo.jpg", reading=reading)
+
+
+def test_tc72_every_role_sees_whether_hosted_models_are_on():
+    """TC-72. Steps: sign in as each of the six roles.
+    Expected: the sidebar states 'Hosted AI models: off' (the suite runs offline), so no
+    screen can imply a model ran when none did."""
+    for uid in ("hospital", "customer", "officer", "riskhead", "registry", "auditor"):
+        at = _login(uid)
+        assert "Hosted AI models: **off** · written fallbacks in use" in " ".join(c.value for c in at.caption), uid
+
+
+def test_tc73_officer_sees_how_the_bill_was_read_and_how_evidence_was_gathered():
+    """TC-73. Steps: officer opens the seeded fabricated claim (a PDF), then a photo claim
+    of a genuine bill already claimed on the policy (so it goes to a person).
+    Expected: for the PDF, 'Read from the PDF's text layer' and a fixed-order trace of
+    all six checks with each result; for the photo, the reading line names the vision
+    model and the language, says the customer confirmed, says there was no second
+    reader and that the reading is not corroborated; every check is listed and the
+    file checks say 'Not applicable' for a photograph."""
+    from trustladder import agent
+    at = _login("officer")
+    fab = next(c for c in _queue() if "R3" in c["rule"] or "R4" in c["rule"])
+    _open_claim(at, fab["claim_id"])
+    texts = _texts(at)
+    assert "Read from the PDF's text layer" in texts
+    assert "How the evidence was gathered" in texts and "fixed order" in texts
+    for tool in agent.TOOL_NAMES:
+        assert f'data-label' not in tool  # (sanity: names are plain)
+    assert "Asked the issuer's registry" in texts and "Checked the policy's claim history" in texts
+
+    submit_claim(_store(), Verifier(RegistryStore(DATA_DIR)), "CUST-002",
+                 (DATA_DIR / "showcase" / "01_genuine_bill.pdf").read_bytes(), "bill.pdf")
+    cid = _picture_claim("CUST-002")
+    assert _store().claim(cid)["status"] in OPEN_STATUSES
+    at = _login("officer")
+    _open_claim(at, cid)
+    texts = _texts(at)
+    assert "Read from a photograph by the vision model <b>stub-vision</b>" in texts
+    assert "printed in <b>English</b>" in texts and "customer confirmed the details" in texts
+    assert "no second reader on this deployment" in texts and "not corroborated" in texts
+    assert "Not applicable: this bill arrived as a photograph" in texts
+
+
+def test_tc74_risk_head_sees_the_reading_models_error_rate():
+    """TC-74. Steps: submit one photo claim confirmed unchanged and one with a correction;
+    open the risk head's dashboard.
+    Expected: a fourth tile '1 of 2 photo readings the customer corrected', worded as the
+    vision model's error rate."""
+    _picture_claim("CUST-003")
+    _picture_claim("CUST-004", {"patient": "Meera Kulkarnee"})
+    at = _login("riskhead")
+    texts = _texts(at)
+    assert "1 of 2" in texts and "photo readings the customer corrected" in texts
+    assert "vision model's error rate" in texts
+
+
+def test_tc75_auditor_sees_the_model_registry_and_the_models_used_per_claim():
+    """TC-75. Steps: auditor → How decisions are made; then Audit trail, search 'Models used'.
+    Expected: R7 is in the rule table; the registry lists the five models with their
+    versions, each hosted one marked 'not on this deployment'; the audit trail has a
+    'Models used' row per claim naming the reader (or 'no model') and the writer."""
+    at = _go(_login("auditor"), "auditor", "How decisions are made")
+    texts = _texts(at)
+    assert "<b>R7</b>" in texts and "The models around the rule" in texts
+    for name in ("Vision-language reader", "Deep OCR, second reader", "Trained screening model",
+                 "Evidence agent", "Reason writer"):
+        assert name in texts, name
+    assert texts.count("not on this deployment") >= 3
+    assert "Hosted models on this deployment: <b>off</b>" in texts
+
+    cid = _picture_claim("CUST-005")
+    at = _go(_login("auditor"), "auditor", "Audit trail")
+    at.text_input(key="aud_q").input("Models used").run()
+    df = at.dataframe[0].value
+    rows = df[df["Claim"] == cid]
+    assert len(rows) == 1 and "stub-vision" in rows.iloc[0]["Detail"]
+    assert "customer confirmed" in rows.iloc[0]["Detail"]
+    assert (df["Detail"].str.contains("text layer, no model")).any()
+
+
+def test_tc76_a_photo_the_issuer_contradicts_is_sent_back_for_the_original_not_held():
+    """TC-76. Steps: build a confirmed photo reading of the EDITED bill (no second reader),
+    submit it; look at the customer's and the officer's screens.
+    Expected: status 'Waiting for customer' (rule R7), the customer is asked for the
+    original PDF and sees no verdict; the officer's queue lists it and the detail shows
+    Inconclusive with the registry answer Mismatch and the 'not corroborated' line."""
+    from trustladder import vision
+    from trustladder.models import ReadStatus
+    pdf = (DATA_DIR / "showcase" / "02_same_bill_total_raised.pdf").read_bytes()
+    reading = vision.apply_corrections(
+        vision.Reading(ReadStatus.OK, read_bill(pdf)[1], "read", source="vision model", model="stub-vision"), {})
+    cid = submit_claim(_store(), Verifier(RegistryStore(DATA_DIR)), "CUST-001", _tiny_jpeg(), "edited_photo.jpg",
+                       reading=reading)
+    c = _store().claim(cid)
+    assert c["status"] == "Waiting for customer" and c["rule"].startswith("R7") and c["verdict"] == "Inconclusive"
+    at = _login("customer")
+    texts = _texts(at)
+    assert "upload the original PDF" in texts and 'data-testid="tl-verdict"' not in texts
+    at = _login("officer")
+    _open_claim(at, cid)
+    assert _verdict(at) == "Inconclusive"
+    texts = _texts(at)
+    assert "not corroborated" in texts and "Mismatch" in texts

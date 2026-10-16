@@ -27,7 +27,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from trustladder import crypto
+from trustladder import crypto, vision
 from trustladder.cases import HOSPITALS
 from trustladder.models import BillFields, LineItem
 from trustladder.policy import (ALLOWED, COST_PER_HOUR_RS, HOLD, MINUTES_PER_REVIEW, PAY,
@@ -51,12 +51,13 @@ class Ctx:
 
 
 def sample_pack_button(ctx: Ctx, key: str) -> None:
-    """Offer the six sample bills as a zip, so anyone can try the upload path."""
+    """Offer the seven sample bills as a zip, so anyone can try the upload path."""
     pack = ctx.data_dir / "TrustLadder_sample_bills.zip"
     if pack.exists():
-        st.download_button("Download 6 sample bills (zip)", pack.read_bytes(),
+        st.download_button("Download sample bills (zip)", pack.read_bytes(),
                            "TrustLadder_sample_bills.zip", mime="application/zip", key=key,
-                           help="Genuine, altered, made-from-nothing, not-joined and blurred examples")
+                           help="What the demo's patient has on her phone: six PDFs and two photos, "
+                                "one of them printed in Marathi")
 
 
 def _status_chip(status: str) -> str:
@@ -179,30 +180,132 @@ def customer_claims(ctx: Ctx) -> None:
                     st.rerun()
 
 
+_FORM_FIELDS = [
+    # key, label, confidence key, help
+    ("issuer_id", "Hospital's issuer ID", "issuer_id", "Printed under the hospital's name"),
+    ("bill_no", "Bill number", "bill_no", ""),
+    ("bill_date", "Bill date (YYYY-MM-DD)", "bill_date", ""),
+    ("patient", "Patient", "patient", ""),
+    ("total", "Grand total (Rs)", "total", "Rupees, as printed"),
+    ("ticket", "Ticket printed on the bill", "ticket", "Leave empty if the bill has none"),
+]
+
+
+def _conf_chip(value: float | None) -> str:
+    """A small confidence pill beside a field the model read."""
+    if value is None:
+        return ""
+    colour = "#15803D" if value >= 0.9 else "#B45309" if value >= 0.7 else "#B91C1C"
+    return f'<span class="tl-conf" style="background:{colour}">{value:.0%} sure</span>'
+
+
+def _is_picture(data: bytes, name: str) -> bool:
+    """A JPEG or PNG, or a PDF with no text layer (a scan)."""
+    from trustladder.reader import pdf_text
+    return vision.mime_of(name) is not None or len(pdf_text(data).strip()) < 20
+
+
+def _reading_form(reading: vision.Reading, form_key: str) -> tuple[dict, bool]:
+    """Show what the vision model read, let the customer correct it, and ask them to confirm.
+
+    Returns (values as typed, confirmed). The form is keyed on the file, so a new upload
+    starts a new form instead of carrying the previous bill's corrections across.
+    """
+    model = reading.model or "the vision model"
+    lang = f" · printed in <b>{reading.language}</b>" if reading.language else ""
+    if reading.status.value == "Read":
+        title = "Here is what the vision model read from your photo"
+        sub = (f'<span class="ai">AI</span> Read by <b>{model}</b>{lang}. Check each line, correct '
+               'anything that is wrong, then confirm.')
+    elif reading.partial:
+        title = "The picture was read, but not every detail"
+        sub = (f'{reading.note} <span class="ai">AI</span> Reader: <b>{model}</b>{lang}.')
+    else:
+        title = "This picture could not be read"
+        sub = reading.note
+    st.markdown(f'<div class="tl-read"><div class="t">{title}</div><div class="s">{sub}</div></div>',
+                unsafe_allow_html=True)
+    values = vision.form_values(reading)
+    typed = {}
+    cols = st.columns(2)
+    for i, (key, label, ckey, help_) in enumerate(_FORM_FIELDS):
+        with cols[i % 2]:
+            shown = values.get(key, "")
+            if key == "total":
+                shown = f"{shown / 100:,.2f}" if shown else ""
+            conf = reading.confidence.get(ckey) if reading.status.value == "Read" else None
+            st.markdown(f'<div style="font-size:0.84rem;color:#64748B;margin-bottom:-10px">{label}'
+                        f'{_conf_chip(conf)}</div>', unsafe_allow_html=True)
+            typed[key] = st.text_input(label, value=str(shown), key=f"{form_key}_{key}",
+                                       label_visibility="collapsed", help=help_ or None)
+    if reading.fields and reading.fields.items:
+        with st.expander(f"The {len(reading.fields.items)} charges it read"):
+            st.dataframe(pd.DataFrame([{"Description": i.description, "Amount (Rs)": f"{i.amount_paise / 100:,.2f}"}
+                                       for i in reading.fields.items]), hide_index=True, width="stretch")
+    confirmed = st.checkbox("These are the details on my bill", key=f"{form_key}_ok")
+    st.caption("In this demo the reading model is hosted by Google and the bill is synthetic. In the "
+               "product the reader runs inside the insurer, and your photo never leaves it.")
+    return typed, confirmed
+
+
 def customer_submit(ctx: Ctx) -> None:
-    """The customer's only way in: upload the bill PDF the hospital gave them."""
+    """The customer's only way in: upload the bill the hospital gave them, as a PDF or a photo.
+
+    A PDF with a text layer is read exactly and only needs a glance before submitting.
+    A photograph is read by the vision model, and what it read is shown back as a form
+    the customer can correct and must confirm: the reading is the customer's statement
+    once they submit it, and the number of corrections is the reader's measured error.
+    """
     cid = ctx.user["customer_id"]
-    page_title("Submit a claim", "Upload the bill your hospital gave you. It is checked the moment you "
-                                 "submit, and you are told straight away where your claim stands.")
-    up = st.file_uploader("Your bill (PDF)", type=["pdf"], key="cs_upload")
-    # The bill is shown BEFORE the Submit button, not after it. With the button first,
-    # the obvious next click came before the chance to check the file, which is the
-    # wrong order for the one irreversible thing a customer does on this screen.
+    page_title("Submit a claim", "Upload the bill your hospital gave you, or a photo of it. It is "
+                                 "checked the moment you submit, and you are told straight away where "
+                                 "your claim stands.")
+    up = st.file_uploader("Your bill (PDF, or a photo as JPG or PNG)", type=["pdf", "jpg", "jpeg", "png"],
+                          key="cs_upload")
+    reading = None
+    typed, confirmed = {}, False
+    picture = False
     if up is not None:
-        st.markdown("**Check this is the right bill, then submit it.**")
-        st.image(C.preview_png(up.getvalue()), width=430)
-        st.write("")
+        data = up.getvalue()
+        picture = _is_picture(data, up.name)
+        # The bill is shown BEFORE the Submit button, not after it. With the button first,
+        # the obvious next click came before the chance to check the file, which is the
+        # wrong order for the one irreversible thing a customer does on this screen.
+        if not picture:
+            st.markdown("**Check this is the right bill, then submit it.**")
+            st.image(C.preview_png(data), width=430)
+            st.write("")
+        else:
+            # Read once per file. The model is slow and must not re-run on every click.
+            file_key = f"{up.name}:{len(data)}:{hash(data[:4096])}"
+            if st.session_state.get("cs_read_key") != file_key:
+                with st.spinner("Reading your photo with a vision model…"):
+                    st.session_state.cs_reading = vision.read_any(data, up.name)
+                st.session_state.cs_read_key = file_key
+            reading = st.session_state.cs_reading
+            left, right = st.columns([2, 3], gap="large")
+            with left:
+                st.image(C.preview_any(data, up.name), width="stretch")
+            with right:
+                typed, confirmed = _reading_form(reading, f"rf_{abs(hash(file_key))}")
+            st.write("")
     c1, c2 = st.columns([1, 3])
-    submitted = c1.button("Submit claim", type="primary", key="cs_submit", disabled=up is None)
+    can_submit = up is not None and (not picture or confirmed)
+    submitted = c1.button("Submit claim", type="primary", key="cs_submit", disabled=not can_submit)
     with c2:
         sample_pack_button(ctx, "cs_pack")
+        if picture and not confirmed:
+            st.caption("Confirm the details above to submit.")
     if submitted:
         # A bill that came in before is not refused: it is checked like any other,
         # and "already claimed on this policy" becomes one more piece of evidence.
         # The audit trail names the PARTY who claimed, not the login they used:
         # "Customer" is a role label for the screen, and an auditor needs the person.
         # submit_claim falls back to the customer's own name when no actor is given.
-        st.session_state.cs_last = submit_claim(ctx.store, ctx.verifier, cid, up.getvalue(), up.name)
+        confirmed_reading = vision.apply_corrections(reading, typed) if picture else None
+        with st.spinner("Checking your bill…"):
+            st.session_state.cs_last = submit_claim(ctx.store, ctx.verifier, cid, up.getvalue(), up.name,
+                                                    reading=confirmed_reading, background=True)
     last = st.session_state.get("cs_last")
     if last:
         c = ctx.store.claim(last)
@@ -212,7 +315,7 @@ def customer_submit(ctx: Ctx) -> None:
                     f"you uploaded `{c['file_name']}`", unsafe_allow_html=True)
         # The customer sees the STATUS of their claim, never the verdict, the findings or
         # the stage ladder. See components.claim_receipt for why.
-        C.claim_receipt(c["status"], c["pdf"], CUSTOMER_TEXT[c["status"]])
+        C.claim_receipt(c["status"], c["pdf"], CUSTOMER_TEXT[c["status"]], c["file_name"])
 
 
 # ==========================================================================
@@ -260,6 +363,9 @@ def _claim_detail(ctx: Ctx, claim_id: str) -> None:
     # was found without having to turn anything on.
     C.verdict_view(r, c["pdf"], next_step=c["initial_action"], actions=decision_buttons,
                    show_findings=True)
+    st.write("")
+    C.reading_line(r)
+    C.agent_panel(r, pending=bool(c.get("narrative_pending")))
 
 
 SORT_ORDERS = ("Newest first", "Longest waiting first", "Worst first")
@@ -418,7 +524,9 @@ def risk_dashboard(ctx: Ctx) -> None:
           (f"{m['rejected']} of {m['sample_frauds']}",
            f"known frauds rejected after review<br>{m['sample_frauds_paid']} were paid automatically"),
           (f"{m['wrongful_holds']}",
-           f"honest {held_word} wrongly held<br>genuine bills stopped by the rule, then released")])
+           f"honest {held_word} wrongly held<br>genuine bills stopped by the rule, then released"),
+          (f"{m['readings_corrected']} of {m['picture_claims']}",
+           "photo readings the customer corrected<br>the vision model's error rate, as customers see it")])
     st.caption(f"The other {m['to_person']} claims went to a person: {m['open']} are still open and "
                f"{m['released_after_review']} were released after review. Officer time so far: "
                f"about {m['officer_hours']} hours at {MINUTES_PER_REVIEW} minutes a case.")
@@ -542,9 +650,16 @@ def auditor_trail(ctx: Ctx) -> None:
 
 
 def auditor_rules(ctx: Ctx) -> None:
-    page_title("How decisions are made", "A published rule, not a score: anyone can apply it by hand.")
+    page_title("How decisions are made",
+               "A published rule, not a score: anyone can apply it by hand. The models around it are "
+               "published here too, with their versions and their limits.")
     C.rule_table()
     st.write("")
+    st.divider()
+    C.model_registry_table()
+    st.write("")
+    with st.expander("The screening model's weights, in full"):
+        C.model_card()
     with st.expander("The AI architecture around the rule", expanded=C.details_on()):
         C.architecture_diagram()
 

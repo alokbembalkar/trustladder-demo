@@ -11,3 +11,14 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.8
+      # The hosted models: the vision reader, the evidence agent and the reason writer
+      # all use this one key (Google AI Studio). sync:false means Render asks for the
+      # value in its dashboard and it is never stored in this repository, which is
+      # public. Leave it unset and the demo runs on its written fallbacks, and every
+      # screen says so.
+      - key: GEMINI_API_KEY
+        sync: false
+      # The seeder runs at build time. Leave models ON there so the seeded queue carries
+      # model-written reasons and agent traces; set to "off" to seed on the fallbacks.
+      - key: TRUSTLADDER_MODELS
+        value: "on"

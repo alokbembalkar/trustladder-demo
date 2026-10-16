@@ -38,10 +38,20 @@ Unreadable is not wrong. A document that could not be read is Inconclusive and
 never reaches the registry comparison, so our own misreading can never be
 reported as the issuer contradicting the document.
 
+A picture is not a text layer. A bill read from a photograph by a model is a
+transcription, and one misread character would turn the issuer's "Not issued" into
+a false accusation. So a reading from a picture can be CLEARED by the issuer (a
+misread cannot produce a false match) but can be CONDEMNED by the issuer only when
+it is corroborated: a second, independent reader agreed and the customer confirmed
+the fields. Otherwise the contradiction becomes "ask the customer for the original",
+which is the same honesty as R0 applied to the reader itself.
+
 The table (checked top to bottom, first match wins):
 
     R0  bill could not be read                      -> Inconclusive
     R1  issuer: verified                            -> Authentic
+    R7  issuer contradicts an UNCORROBORATED
+        reading from a picture                      -> Inconclusive (ask for the original)
     R2  issuer: mismatch                            -> Tampered
     R3  issuer: not issued                          -> Tampered
     R4  no issuer answer + >=2 screening families   -> Tampered
@@ -75,6 +85,8 @@ DEFAULT_QUEUE = {
     "R4": "Hold and investigate",
     "R5": "Human review",
     "R6": "Human review: no proof available, so it is never cleared automatically",
+    "R7": "Could-not-read queue: ask the customer for the original, so the issuer's answer "
+          "can be checked against an exact reading",
 }
 
 RULE_TEXT = {
@@ -89,6 +101,9 @@ RULE_TEXT = {
           "enough to convict.",
     "R6": "No issuer answer is available and nothing looks wrong. 'Nothing looks wrong' is not "
           "proof, so the bill is referred, not cleared.",
+    "R7": "The issuer's record disagrees with what was read from a picture, and that reading "
+          "is not corroborated. A misread must never become an accusation, so the original "
+          "is requested instead.",
 }
 
 
@@ -97,9 +112,13 @@ def _decision(rule_id: str, verdict: Verdict, grade: EvidenceGrade) -> Decision:
 
 
 def decide(read_status: ReadStatus, registry: RegistryAnswer,
-           findings: list[Finding]) -> Decision:
-    """Apply the rule table. Pure function: same inputs, same verdict, always."""
-    n_families = len({f.family for f in findings})
+           findings: list[Finding], corroborated: bool = True) -> Decision:
+    """Apply the rule table. Pure function: same inputs, same verdict, always.
+
+    `corroborated` is True for a text-layer read, and for a picture only when a second
+    reader agreed and the customer confirmed the fields (see vision.Reading).
+    """
+    n_families = len({f.family for f in findings if f.independent})
 
     if read_status is ReadStatus.COULD_NOT_READ:
         return _decision("R0", Verdict.INCONCLUSIVE, EvidenceGrade.NONE)
@@ -107,6 +126,9 @@ def decide(read_status: ReadStatus, registry: RegistryAnswer,
     # The issuer speaking, in either direction, is proof and decides on its own.
     if registry is RegistryAnswer.VERIFIED:
         return _decision("R1", Verdict.AUTHENTIC, EvidenceGrade.PROOF)
+    if registry in (RegistryAnswer.MISMATCH, RegistryAnswer.NOT_ISSUED) and not corroborated:
+        # The issuer contradicts a reading we cannot vouch for. Ask for the original.
+        return _decision("R7", Verdict.INCONCLUSIVE, EvidenceGrade.NONE)
     if registry is RegistryAnswer.MISMATCH:
         return _decision("R2", Verdict.TAMPERED, EvidenceGrade.CONTRADICTION)
     if registry is RegistryAnswer.NOT_ISSUED:

@@ -126,6 +126,15 @@ class Finding:
     family: str        # "arithmetic" | "file history" | "fonts" | CLAIM_HISTORY
     check: str         # short machine name of the check
     detail: str        # one plain sentence a claims officer can read
+    independent: bool = True
+    """Does this finding count as an independent cause?
+
+    Almost always yes. It is False for two things, and both are reported to the
+    officer but excluded from the rule's count. A second opinion on a document the
+    other checks already read is not a second cause. And a signal the screening
+    model has identified as innocent — a file re-saved by a phone app rather than
+    edited — is evidence the officer should see but not evidence of wrongdoing.
+    """
 
 
 @dataclass
@@ -145,5 +154,24 @@ class LadderResult:
     reason: str                   # the plain-language reason shown to people
     needs_human: bool             # True for every verdict except Authentic
     queue: str                    # where the document goes next
+    reason_writer: str = "template"
+    """Who wrote `reason`: "model" or "template".
+
+    Kept with the result because a reader is entitled to know whether a sentence was
+    generated or assembled, and because the screen says so rather than leaving it to
+    be assumed either way.
+    """
     rule_version: str = ""
     timings_ms: dict = field(default_factory=dict)
+    read_report: dict = field(default_factory=dict)
+    """How the bill was read (see vision.Reading.report): source, model, language,
+    per-field confidence, whether a second reader agreed, whether the customer
+    confirmed, and how many fields they corrected. Empty for a text-layer read."""
+    agent_trace: list = field(default_factory=list)
+    """The evidence agent's steps, in order: which check it chose, why, what came
+    back. Empty when the issuer settled the document and no gathering was needed."""
+    agent_note: str = ""
+    """The agent's case note for the officer. Never a verdict: the rule decides."""
+    models_used: dict = field(default_factory=dict)
+    """Which model version did which job on this claim: {"reader": ..., "agent": ...,
+    "reason": ...}. Written to the audit record so any decision can be replayed."""
