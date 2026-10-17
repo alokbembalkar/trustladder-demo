@@ -111,7 +111,7 @@ STEPS = [
     ("customer", "Submit a claim", "Customer uploads",
      "**First**, attach the bill **and** the discharge summary you just downloaded, together, and press "
      "**Submit claim**. "
-     "**Then** press **Download sample bills**, attach the photo **08_marathi_bill_photo.jpg**, "
+     "**Then** press **Download sample bills**, attach file **03**, the Marathi bill photo, "
      "check what the vision model read, tick the box and submit. "
      "**Last**, open **Demo toolkit** in the sidebar, press **Download the edited copy**, and attach "
      "that.",

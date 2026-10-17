@@ -257,8 +257,8 @@ def main() -> None:
         pack = Path(BUILD / "demo_files" / d3.value.suggested_filename)
         d3.value.save_as(str(pack))
         with _zip.ZipFile(pack) as z:
-            member = next(n for n in z.namelist() if n.endswith("08_marathi_bill_photo.jpg"))
-            photo = pack.parent / "08_marathi_bill_photo.jpg"
+            member = next(n for n in z.namelist() if n.endswith("bill printed in Marathi (phone photo).jpg"))
+            photo = pack.parent / "03 marathi bill photo.jpg"
             photo.write_bytes(z.read(member))
         pg.locator("[data-testid='stMain'] input[type='file']").first.set_input_files(str(photo))
         settle(pg)

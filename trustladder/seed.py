@@ -84,30 +84,38 @@ def _bill_for(rng, issuer_id, customer, serial, day) -> BillFields:
 # bills hospitals sent her; the two JPEGs are photographs she took of printed bills.
 # "Expected" is what happens the FIRST time each file is claimed on her policy.
 SAMPLE_PACK = [
-    ("01_genuine_bill.pdf", "Bill 1: genuine, from a hospital that has joined", "Authentic"),
-    ("02_same_bill_total_raised.pdf", "Bill 1 with its total raised afterwards (same bill number)", "Tampered"),
-    ("03_made_from_nothing.pdf", "Same patient and hospital, but a bill the hospital never issued", "Tampered"),
-    ("04_genuine_hospital_not_joined.pdf", "Genuine, from a hospital that has not joined", "Inconclusive"),
-    ("05_photo_of_arogya_bill.jpg",
-     "A phone PHOTO of her genuine Arogya bill. Read by the vision model; the hospital confirms it.",
-     "Authentic"),
-    ("06_made_from_nothing_not_joined.pdf", "A fake from a hospital that has not joined", "Inconclusive"),
-    ("07_genuine_discounted_and_resaved.pdf",
-     "GENUINE: bill 4 with a hospital discount, re-saved by a phone app. Looks edited, is not.",
-     "Suspicious"),
-    ("08_marathi_bill_photo.jpg",
-     "A phone PHOTO of a genuine Sahyog bill printed in Marathi. The vision model reads it in "
-     "Marathi; the hospital confirms it.",
-     "Authentic"),
+    # (showcase file, name in the pack, what it is, expected on the first claim)
+    # Numbered in the order a presenter picks them up, named with the patient and the
+    # hospital so nothing on screen needs decoding. The words "discharge summary" in a
+    # name also tell the customer screen what an unread scan is.
+    ("01_genuine_bill.pdf", "01 Meera Kulkarni - Sahyog Hospital - bill.pdf",
+     "Genuine bill from a hospital that has joined", "Authentic, paid"),
     ("09_discharge_summary_for_bill_1.jpg",
-     "A scanned DISCHARGE SUMMARY for bill 1 (same stay, same patient). Attach it with bill 1: the "
-     "hospital confirms both and the dates agree.",
-     "Authentic, with bill 1"),
+     "02 Meera Kulkarni - Sahyog Hospital - discharge summary for bill 01 (scan).jpg",
+     "Scanned discharge summary for bill 01: same stay, same patient. Attach with 01.",
+     "Authentic, paid; the hospital confirms both"),
+    ("08_marathi_bill_photo.jpg",
+     "03 Meera Kulkarni - Sahyog Hospital - bill printed in Marathi (phone photo).jpg",
+     "Phone photo of a genuine Sahyog bill printed in Marathi; the vision model reads it in Marathi.",
+     "Authentic, paid"),
+    ("02_same_bill_total_raised.pdf", "04 Meera Kulkarni - Sahyog Hospital - bill 01 with the total raised.pdf",
+     "Bill 01 edited afterwards: same bill number, bigger total.", "Tampered, held"),
+    ("03_made_from_nothing.pdf", "05 Meera Kulkarni - Sahyog Hospital - bill the hospital never issued.pdf",
+     "Typed from a blank page, right format, never issued.", "Tampered, held"),
+    ("04_genuine_hospital_not_joined.pdf", "06 Meera Kulkarni - Shanti Clinic (not joined) - bill.pdf",
+     "Genuine, from a hospital that has not joined the registry.", "Inconclusive, to a person"),
     ("10_discharge_summary_dates_mismatch.jpg",
-     "A scanned DISCHARGE SUMMARY from the hospital that has not joined, for a stay of 12-15 March. "
-     "Attach it with bill 4 (dated 7 March): neither hospital can be asked, and the packet does not "
-     "add up.",
-     "Suspicious, with bill 4"),
+     "07 Meera Kulkarni - Shanti Clinic (not joined) - discharge summary with dates that do not match bill 06 (scan).jpg",
+     "Scanned discharge summary for a stay of 12 to 15 March; bill 06 is dated 7 March. Attach with 06.",
+     "Suspicious, to a person: the packet does not add up"),
+    ("07_genuine_discounted_and_resaved.pdf",
+     "08 Meera Kulkarni - Shanti Clinic (not joined) - bill discounted and re-saved by a phone app.pdf",
+     "GENUINE: a hospital discount and a phone-app re-save make it look edited.", "Suspicious, to a person"),
+    ("05_photo_of_arogya_bill.jpg", "09 Meera Kulkarni - Arogya Nursing Home - bill (phone photo).jpg",
+     "Phone photo of her genuine Arogya bill; the vision model reads it.", "Authentic, paid"),
+    ("06_made_from_nothing_not_joined.pdf",
+     "10 Meera Kulkarni - Shanti Clinic (not joined) - bill the hospital never issued.pdf",
+     "A fake from a hospital that has not joined: nothing can be proven either way.", "Inconclusive, to a person"),
 ]
 
 
@@ -117,19 +125,19 @@ def build_sample_pack(data_dir: Path = DATA_DIR) -> Path:
     out = Path(data_dir) / "sample_bills"
     out.mkdir(parents=True, exist_ok=True)
     readme = ["TrustLadder sample documents (synthetic: fictional hospitals, one patient, invented amounts).",
-              "This is what the demo's patient, Meera Kulkarni, has on her phone: PDFs her hospitals",
-              "sent her, two photographs she took of printed bills (05 and 08), and two scanned",
-              "discharge summaries (09 and 10). File 2 is file 1 edited; file 7 is file 4 after a",
-              "hospital discount and a phone app re-save. A claim is a PACKET: attach the bill and",
-              "the discharge summary together on the one upload screen.",
+              "This is what the demo's patient, Meera Kulkarni, has on her phone, numbered in the order",
+              "a presenter picks them up. Each name carries the patient, the hospital and what the file",
+              "is. A claim is a PACKET: attach a bill and its discharge summary together on the one",
+              "upload screen (01 with 02; 06 with 07). File 04 is file 01 edited; file 08 is file 06",
+              "after a hospital discount and a phone-app re-save.",
               "Upload any of these in the portal at Customer -> Submit a claim: that one screen takes a",
               "PDF or a photo, genuine or tampered, and checks every one the same way. A photo is read by",
               "a vision model and the details are shown to you to confirm before you submit.",
               "The expected result is for the FIRST claim of each bill; a bill claimed twice goes to a",
               "person, never paid twice automatically.",
               ""]
-    for name, what, expected in SAMPLE_PACK:
-        (out / name).write_bytes((Path(data_dir) / "showcase" / name).read_bytes())
+    for src, name, what, expected in SAMPLE_PACK:
+        (out / name).write_bytes((Path(data_dir) / "showcase" / src).read_bytes())
         readme.append(f"{name}\n    {what}\n    Expected: {expected}\n")
     (out / "README.txt").write_text("\n".join(readme))
     zip_path = Path(data_dir) / "TrustLadder_sample_bills.zip"
