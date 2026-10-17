@@ -140,6 +140,8 @@ def main() -> None:
             fail(f"customer: expected two slots, found {slots.count()}")
         slots.nth(0).set_input_files(str(pack.parent / "sweep_01.pdf"))
         settle(pg)
+        pg.wait_for_selector("[data-testid='stMain'] img", timeout=SLOW)      # the bill's preview
+        settle(pg)
         if pg.get_by_role("button", name="Submit claim").is_enabled():
             fail("customer: Submit is enabled without the discharge summary")
         ok("customer: the bill alone cannot be submitted")
@@ -153,7 +155,12 @@ def main() -> None:
             print(f"TC-32 note: models are on but the scan was not read by the model: {shown[:140]!r}")
         pg.get_by_text("These are the details on my discharge summary").click()
         settle(pg)
-        if not pg.get_by_role("button", name="Submit claim").is_enabled():
+        # The tick triggers a rerun; on the free host that can take a few seconds.
+        for _ in range(60):
+            if pg.get_by_role("button", name="Submit claim").is_enabled():
+                break
+            pg.wait_for_timeout(1000)
+        else:
             fail("customer: Submit stays disabled after both documents are attached and confirmed")
         pg.get_by_role("button", name="Submit claim").click()
         settle(pg)
@@ -176,7 +183,9 @@ def main() -> None:
         if pg.locator("[data-testid='tl-verdict']:visible").count():
             fail("officer: a verdict is shown before a claim is chosen")
         pg.get_by_role("button", name="Open").first.click()
+        pg.wait_for_selector("[data-testid='tl-verdict']", timeout=SLOW)   # the free host is slow
         settle(pg)
+        pg.wait_for_selector("text=How the evidence was gathered", timeout=SLOW)
         text = body(pg)
         for needed in ("What was found", "How the evidence was gathered", "Approve payment", "Reject as fraud"):
             if needed not in text:
@@ -192,12 +201,18 @@ def main() -> None:
         # The selected value is not readable from the combobox, so try one option and,
         # if it was already selected, the other: one of the two must move the line.
         moved = ""
+        def counts_line() -> str:
+            return body(pg).split("would go:")[1].split("\n")[0]
+
         for option in ("Ask customer for original", "Human review"):
             pg.get_by_role("combobox", name="Inconclusive").click()
             pg.get_by_role("option", name=option).click()
             settle(pg)
-            after = body(pg).split("would go:")[1].split("\n")[0]
-            if after != before:
+            for _ in range(30):                       # the free host reruns slowly
+                if counts_line() != before:
+                    break
+                pg.wait_for_timeout(1000)
+            if counts_line() != before:
                 moved = option
                 break
         if not moved:
@@ -230,7 +245,9 @@ def main() -> None:
             fail("auditor: the trail cannot be downloaded")
         pg.get_by_text("How decisions are made", exact=True).first.click()
         settle(pg)
-        if "The models around the rule" not in body(pg):
+        try:
+            pg.wait_for_selector("text=The models around the rule", timeout=SLOW)
+        except Exception:
             fail("auditor: the model registry is missing")
         ok("auditor: the trail and the model registry are on screen")
         browser.close()
