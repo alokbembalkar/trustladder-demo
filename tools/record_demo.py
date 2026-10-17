@@ -217,15 +217,23 @@ def main() -> None:
 
         # 2. The customer uploads that bill
         next_step()
-        expect_text(pg, "Your claim documents", "step 2: customer upload screen takes the claim packet")
+        expect_text(pg, "1. Hospital bill", "step 2: the customer screen has the bill slot")
+        expect_text(pg, "2. Discharge summary", "step 2: and the discharge summary slot")
         # scope to the main area: the presenter's sidebar toolkit also has an upload box.
-        # The first packet is the bill AND the discharge summary, attached together.
-        pg.locator("[data-testid='stMain'] input[type='file']").first.set_input_files([str(genuine), str(summary)])
+        # The first packet: the bill in slot 1, the discharge summary in slot 2.
+        slots = pg.locator("[data-testid='stMain'] input[type='file']")
+        if pg.get_by_role("button", name="Submit claim").is_enabled():
+            raise SystemExit("TC-30 FAILED: step 2: Submit is enabled with nothing attached")
+        slots.nth(0).set_input_files(str(genuine))
         settle(pg)
-        expect_text(pg, "Discharge summary", "step 2: the packet recognised the discharge summary")
+        if pg.get_by_role("button", name="Submit claim").is_enabled():
+            raise SystemExit("TC-30 FAILED: step 2: Submit is enabled with the bill alone; the summary is required")
+        print("TC-30 pass: step 2: the claim cannot be submitted without the discharge summary")
+        slots.nth(1).set_input_files(str(summary))
+        settle(pg)
         # The bill must be on screen, and ABOVE the Submit button, before anything is sent.
-        if "Check this is the right bill" not in pg.inner_text("body"):
-            raise SystemExit("TC-30 FAILED: the customer cannot see the bill before submitting")
+        if pg.locator("[data-testid='stMain'] img").count() < 2:
+            raise SystemExit("TC-30 FAILED: the customer cannot see both documents before submitting")
         order = pg.evaluate("""() => {
             const main = document.querySelector("[data-testid='stMain']");
             const img = main.querySelector("img");
@@ -241,7 +249,7 @@ def main() -> None:
         pg.get_by_role("button", name="Submit claim").click()
         settle(pg)
         expect_claim_status(pg, "Paid", "step 2: the customer's own packet (bill + summary), paid on proof")
-        clear_uploads(pg)          # a new packet starts clean
+
         pg.wait_for_timeout(READ)
         still(pg, "customer_upload")
 
@@ -260,7 +268,13 @@ def main() -> None:
             member = next(n for n in z.namelist() if n.endswith("bill printed in Marathi (phone photo).jpg"))
             photo = pack.parent / "03 marathi bill photo.jpg"
             photo.write_bytes(z.read(member))
-        pg.locator("[data-testid='stMain'] input[type='file']").first.set_input_files(str(photo))
+            member2 = next(n for n in z.namelist() if n.endswith("discharge summary for bill 03 (scan).jpg"))
+            photo_ds = pack.parent / "04 marathi discharge summary.jpg"
+            photo_ds.write_bytes(z.read(member2))
+        slots = pg.locator("[data-testid='stMain'] input[type='file']")
+        slots.nth(0).set_input_files(str(photo))
+        settle(pg)
+        slots.nth(1).set_input_files(str(photo_ds))
         settle(pg)
         pg.wait_for_selector("text=These are the details on my bill", timeout=SLOW)
         body = pg.inner_text("body")
@@ -281,6 +295,8 @@ def main() -> None:
             raise SystemExit("TC-30 FAILED: step 2: a photo could be submitted before it was confirmed")
         print("TC-30 pass: step 2: a photo cannot be submitted until the customer confirms the reading")
         pg.get_by_text("These are the details on my bill").click()
+        settle(pg)
+        pg.get_by_text("These are the details on my discharge summary").click()
         settle(pg)
         still(pg, "customer_photo_reading")
         pg.get_by_role("button", name="Submit claim").click()
@@ -304,16 +320,18 @@ def main() -> None:
         # The toolkit starts from the bill it already holds, so the presenter is never
         # asked for the same file twice. Exactly one upload box may be on screen here.
         n_up = pg.locator("input[type='file']").count()
-        if n_up != 1:
-            raise SystemExit(f"TC-30 FAIL: expected one upload box on screen, found {n_up}")
-        print("TC-30 pass: step 2: exactly one upload box on screen (the claim form)")
+        if n_up != 2:
+            raise SystemExit(f"TC-30 FAIL: expected the two claim slots and nothing else, found {n_up}")
+        print("TC-30 pass: step 2: the two claim slots are the only upload boxes on screen")
         with pg.expect_download() as d2:
             pg.get_by_role("button", name="Download the edited copy").click()
         tampered = genuine.parent / d2.value.suggested_filename
         d2.value.save_as(str(tampered))
         print(f"TC-30 pass: the forger's toolkit produced {tampered.name}")
-        clear_uploads(pg)
-        pg.locator("[data-testid='stMain'] input[type='file']").first.set_input_files(str(tampered))
+        slots = pg.locator("[data-testid='stMain'] input[type='file']")
+        slots.nth(0).set_input_files(str(tampered))
+        settle(pg)
+        slots.nth(1).set_input_files(str(summary))      # the forger reuses the genuine summary
         settle(pg)
         pg.get_by_role("button", name="Submit claim").click()
         settle(pg)

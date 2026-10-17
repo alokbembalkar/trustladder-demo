@@ -337,7 +337,7 @@ def render_discharge_summary(s: "DischargeFields", *, joined: bool,
     y -= 4 * mm
     c.line(left, y, right, y); y -= 7 * mm
     for label, value in (("Diagnosis", s.diagnosis),
-                         ("Operation", s.procedure or "None"),
+                         ("Operation", "None" if s.procedure.strip().lower() in ("", "none") else s.procedure),
                          ("Course in hospital", "Uneventful. Vitals stable throughout."),
                          ("Condition on discharge", "Satisfactory. Mobilising independently; tolerating oral diet."),
                          ("Advice on discharge", "Medication as prescribed. Review in the outpatient department in one week. "

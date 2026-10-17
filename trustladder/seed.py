@@ -27,8 +27,9 @@ from pathlib import Path
 
 from .bills import (photo_of, random_bill, render_altered, render_discharge_summary, render_discount_resaved,
                     render_fabricated, render_genuine, render_resaved, render_scan)
-from .cases import (DATA_DIR, HOSPITALS, MARATHI_BILL, ROOT, SUMMARY_DATES_MISMATCH, SUMMARY_FOR_BILL_1,
-                    build_showcase, build_simulation)
+from .cases import (DATA_DIR, HOSPITALS, MARATHI_BILL, ROOT, SUMMARY_DATES_MISMATCH, SUMMARY_FAKE_SAHYOG,
+                    SUMMARY_FAKE_SHANTI, SUMMARY_FOR_AROGYA, SUMMARY_FOR_BILL_1, SUMMARY_FOR_MARATHI,
+                    SUMMARY_FOR_SHANTI, build_showcase, build_simulation)
 from .models import BillFields, DischargeFields
 from .reader import read_bill
 from .registry import RegistryStore, Verifier
@@ -85,37 +86,53 @@ def _bill_for(rng, issuer_id, customer, serial, day) -> BillFields:
 # "Expected" is what happens the FIRST time each file is claimed on her policy.
 SAMPLE_PACK = [
     # (showcase file, name in the pack, what it is, expected on the first claim)
-    # Numbered in the order a presenter picks them up, named with the patient and the
-    # hospital so nothing on screen needs decoding. The words "discharge summary" in a
-    # name also tell the customer screen what an unread scan is.
+    # A claim needs BOTH documents, so the pack is in pairs: each bill with the discharge
+    # summary that belongs to it, numbered in the order a presenter picks them up and
+    # named with the patient and the hospital so nothing on screen needs decoding.
     ("01_genuine_bill.pdf", "01 Meera Kulkarni - Sahyog Hospital - bill.pdf",
-     "Genuine bill from a hospital that has joined", "Authentic, paid"),
+     "Genuine bill from a hospital that has joined.", "Paid, with 02"),
     ("09_discharge_summary_for_bill_1.jpg",
      "02 Meera Kulkarni - Sahyog Hospital - discharge summary for bill 01 (scan).jpg",
-     "Scanned discharge summary for bill 01: same stay, same patient. Attach with 01.",
-     "Authentic, paid; the hospital confirms both"),
+     "The scanned discharge summary for bill 01: same stay, same patient.", "Paid, with 01"),
     ("08_marathi_bill_photo.jpg",
      "03 Meera Kulkarni - Sahyog Hospital - bill printed in Marathi (phone photo).jpg",
      "Phone photo of a genuine Sahyog bill printed in Marathi; the vision model reads it in Marathi.",
-     "Authentic, paid"),
-    ("02_same_bill_total_raised.pdf", "04 Meera Kulkarni - Sahyog Hospital - bill 01 with the total raised.pdf",
-     "Bill 01 edited afterwards: same bill number, bigger total.", "Tampered, held"),
-    ("03_made_from_nothing.pdf", "05 Meera Kulkarni - Sahyog Hospital - bill the hospital never issued.pdf",
-     "Typed from a blank page, right format, never issued.", "Tampered, held"),
-    ("04_genuine_hospital_not_joined.pdf", "06 Meera Kulkarni - Shanti Clinic (not joined) - bill.pdf",
-     "Genuine, from a hospital that has not joined the registry.", "Inconclusive, to a person"),
+     "Paid, with 04"),
+    ("11_discharge_summary_for_marathi_bill.jpg",
+     "04 Meera Kulkarni - Sahyog Hospital - discharge summary for bill 03 (scan).jpg",
+     "The scanned discharge summary for the Marathi bill.", "Paid, with 03"),
+    ("02_same_bill_total_raised.pdf", "05 Meera Kulkarni - Sahyog Hospital - bill 01 with the total raised.pdf",
+     "Bill 01 edited afterwards: same bill number, bigger total. Attach with 02, the genuine summary.",
+     "Tampered, held (with 02)"),
+    ("03_made_from_nothing.pdf", "06 Meera Kulkarni - Sahyog Hospital - bill the hospital never issued.pdf",
+     "Typed from a blank page, right format, never issued.", "Tampered, held (with 07)"),
+    ("12_discharge_summary_never_issued_sahyog.pdf",
+     "07 Meera Kulkarni - Sahyog Hospital - discharge summary the hospital never issued.pdf",
+     "The forger's summary to go with bill 06: the hospital says it issued neither.", "Tampered, held (with 06)"),
+    ("04_genuine_hospital_not_joined.pdf", "08 Meera Kulkarni - Shanti Clinic (not joined) - bill.pdf",
+     "Genuine, from a hospital that has not joined the registry.", "In review, with 09"),
+    ("13_discharge_summary_for_shanti_bill.jpg",
+     "09 Meera Kulkarni - Shanti Clinic (not joined) - discharge summary for bill 08 (scan).jpg",
+     "The scanned discharge summary for bill 08: stay 5 to 7 March.", "In review, with 08"),
     ("10_discharge_summary_dates_mismatch.jpg",
-     "07 Meera Kulkarni - Shanti Clinic (not joined) - discharge summary with dates that do not match bill 06 (scan).jpg",
-     "Scanned discharge summary for a stay of 12 to 15 March; bill 06 is dated 7 March. Attach with 06.",
-     "Suspicious, to a person: the packet does not add up"),
+     "10 Meera Kulkarni - Shanti Clinic (not joined) - discharge summary with dates that do not match bill 08 (scan).jpg",
+     "A summary for a stay of 12 to 15 March; bill 08 is dated 7 March. Attach with 08 instead of 09.",
+     "Suspicious, to a person: the packet does not add up (with 08)"),
     ("07_genuine_discounted_and_resaved.pdf",
-     "08 Meera Kulkarni - Shanti Clinic (not joined) - bill discounted and re-saved by a phone app.pdf",
-     "GENUINE: a hospital discount and a phone-app re-save make it look edited.", "Suspicious, to a person"),
-    ("05_photo_of_arogya_bill.jpg", "09 Meera Kulkarni - Arogya Nursing Home - bill (phone photo).jpg",
-     "Phone photo of her genuine Arogya bill; the vision model reads it.", "Authentic, paid"),
+     "11 Meera Kulkarni - Shanti Clinic (not joined) - bill 08 discounted and re-saved by a phone app.pdf",
+     "GENUINE: bill 08 with a hospital discount, re-saved by a phone app. Attach with 09.",
+     "Suspicious, to a person (with 09): looks edited, is not"),
+    ("05_photo_of_arogya_bill.jpg", "12 Meera Kulkarni - Arogya Nursing Home - bill (phone photo).jpg",
+     "Phone photo of her genuine Arogya bill; the vision model reads it.", "Paid, with 13"),
+    ("14_discharge_summary_for_arogya_bill.jpg",
+     "13 Meera Kulkarni - Arogya Nursing Home - discharge summary for bill 12 (scan).jpg",
+     "The scanned discharge summary for the Arogya bill.", "Paid, with 12"),
     ("06_made_from_nothing_not_joined.pdf",
-     "10 Meera Kulkarni - Shanti Clinic (not joined) - bill the hospital never issued.pdf",
-     "A fake from a hospital that has not joined: nothing can be proven either way.", "Inconclusive, to a person"),
+     "14 Meera Kulkarni - Shanti Clinic (not joined) - bill the hospital never issued.pdf",
+     "A fake from a hospital that has not joined: nothing can be proven either way.", "In review, with 15"),
+    ("15_discharge_summary_fake_shanti.pdf",
+     "15 Meera Kulkarni - Shanti Clinic (not joined) - discharge summary the hospital never issued.pdf",
+     "The forger's summary to go with bill 14.", "In review, with 14"),
 ]
 
 
@@ -127,9 +144,10 @@ def build_sample_pack(data_dir: Path = DATA_DIR) -> Path:
     readme = ["TrustLadder sample documents (synthetic: fictional hospitals, one patient, invented amounts).",
               "This is what the demo's patient, Meera Kulkarni, has on her phone, numbered in the order",
               "a presenter picks them up. Each name carries the patient, the hospital and what the file",
-              "is. A claim is a PACKET: attach a bill and its discharge summary together on the one",
-              "upload screen (01 with 02; 06 with 07). File 04 is file 01 edited; file 08 is file 06",
-              "after a hospital discount and a phone-app re-save.",
+              "is. A claim needs BOTH documents, the bill in slot 1 and the discharge summary in slot 2,",
+              "so the files come in pairs: 01+02, 03+04, 05+02, 06+07, 08+09 (or 08+10 for the mismatch),",
+              "11+09, 12+13, 14+15. File 05 is file 01 edited; file 11 is file 08 after a hospital discount",
+              "and a phone-app re-save.",
               "Upload any of these in the portal at Customer -> Submit a claim: that one screen takes a",
               "PDF or a photo, genuine or tampered, and checks every one the same way. A photo is read by",
               "a vision model and the details are shown to you to confirm before you submit.",
@@ -221,6 +239,22 @@ def build_world(data_dir: Path = DATA_DIR) -> Store:
     ds2 = DischargeFields(**SUMMARY_DATES_MISMATCH.__dict__)
     ds2_pdf = issue_summary(store, registry, verifier, ds2, meera[0], "Shanti billing", "2026-03-15 10:10")
     (showcase / "10_discharge_summary_dates_mismatch.jpg").write_bytes(photo_of(ds2_pdf, seed=10, quality=70))
+    #    the summaries that belong with the other bills in the pack. Issued (and published where
+    #    the hospital has joined) so each pair holds together; the forgers' summaries are rendered
+    #    only, with a ticket in the right format that was never published.
+    for fields, name, actor, when, seed in (
+            (SUMMARY_FOR_MARATHI, "11_discharge_summary_for_marathi_bill.jpg", "Sahyog billing", "2026-03-05 12:45", 11),
+            (SUMMARY_FOR_SHANTI, "13_discharge_summary_for_shanti_bill.jpg", "Shanti billing", "2026-03-07 10:30", 13),
+            (SUMMARY_FOR_AROGYA, "14_discharge_summary_for_arogya_bill.jpg", "Arogya billing", "2026-03-08 16:10", 14)):
+        pdf = issue_summary(store, registry, verifier, DischargeFields(**fields.__dict__), meera[0], actor, when)
+        (showcase / name).write_bytes(photo_of(pdf, seed=seed, quality=70))
+    fake_sahyog = DischargeFields(**{**SUMMARY_FAKE_SAHYOG.__dict__,
+                                     "ticket": "SH-" + "-".join("".join(rng.choice("23456789ABCDEFGHJKMNPQRSTUVWXYZ")
+                                                                        for _ in range(4)) for _ in range(4))})
+    (showcase / "12_discharge_summary_never_issued_sahyog.pdf").write_bytes(
+        render_discharge_summary(fake_sahyog, joined=True))
+    (showcase / "15_discharge_summary_fake_shanti.pdf").write_bytes(
+        render_discharge_summary(DischargeFields(**SUMMARY_FAKE_SHANTI.__dict__), joined=False))
     marathi_photo = ROOT / "assets" / "samples" / "marathi_bill_photo.jpg"
     if marathi_photo.exists():
         (showcase / "08_marathi_bill_photo.jpg").write_bytes(marathi_photo.read_bytes())

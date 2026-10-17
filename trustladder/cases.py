@@ -103,10 +103,30 @@ SUMMARY_FOR_BILL_1 = DischargeFields(
     "IN-HOSP-SAHYOG-PUN-0101", "Sahyog Multispeciality Hospital", "SMH/DS/2026/001184", "SMH-UH-204117",
     SHOWCASE_PATIENT, "2026-02-27", "2026-03-03", "Acute calculous cholecystitis",
     "Laparoscopic cholecystectomy under general anaesthesia on 28-Feb-2026", "Dr. A. Deshmukh, MS")
+# The rest of the pack's summaries. A claim needs both documents, so every bill in the
+# pack has the summary that belongs with it: the stay contains the bill's date.
+SUMMARY_FOR_MARATHI = DischargeFields(
+    "IN-HOSP-SAHYOG-PUN-0101", "Sahyog Multispeciality Hospital", "SMH/DS/2026/001209", "SMH-UH-204331",
+    SHOWCASE_PATIENT, "2026-03-02", "2026-03-05", "Acute pyelonephritis", "none", "Dr. S. Phadke, MD")
+SUMMARY_FAKE_SAHYOG = DischargeFields(          # typed by the forger to go with the fake bill
+    "IN-HOSP-SAHYOG-PUN-0101", "Sahyog Multispeciality Hospital", "SMH/DS/2026/001260", "SMH-UH-204502",
+    SHOWCASE_PATIENT, "2026-03-08", "2026-03-11", "Acute appendicitis",
+    "Laparoscopic appendicectomy under general anaesthesia on 09-Mar-2026", "Dr. A. Deshmukh, MS")
+SUMMARY_FOR_SHANTI = DischargeFields(           # matches bill 04 of the showcase (dated 7 March)
+    "IN-HOSP-SHANTI-STR-0419", "Shanti Clinic and Maternity Home", "SCM/DS/2026/000398", "SCM-UH-7702",
+    SHOWCASE_PATIENT, "2026-03-05", "2026-03-07", "Lower-segment caesarean section, elective",
+    "Lower-segment caesarean section under spinal anaesthesia on 05-Mar-2026", "Dr. P. Jagtap, MD")
+SUMMARY_FOR_AROGYA = DischargeFields(           # matches the Arogya bill Meera holds (dated 8 March)
+    "IN-HOSP-AROGYA-NSK-0233", "Arogya Nursing Home", "ANH/DS/2026/000871", "ANH-UH-5519",
+    SHOWCASE_PATIENT, "2026-03-06", "2026-03-08", "Dengue fever with thrombocytopenia", "none", "Dr. N. Pawar, MD")
+SUMMARY_FAKE_SHANTI = DischargeFields(          # the forger's summary for the fake Shanti bill (9 March)
+    "IN-HOSP-SHANTI-STR-0419", "Shanti Clinic and Maternity Home", "SCM/DS/2026/000420", "SCM-UH-7740",
+    SHOWCASE_PATIENT, "2026-03-08", "2026-03-09", "Incomplete abortion",
+    "Dilatation and evacuation under short general anaesthesia on 08-Mar-2026", "Dr. P. Jagtap, MD")
 SUMMARY_DATES_MISMATCH = DischargeFields(
     "IN-HOSP-SHANTI-STR-0419", "Shanti Clinic and Maternity Home", "SCM/DS/2026/000412", "SCM-UH-7731",
     SHOWCASE_PATIENT, "2026-03-12", "2026-03-15", "Acute gastroenteritis with dehydration",
-    "", "Dr. P. Jagtap, MD")
+    "none", "Dr. P. Jagtap, MD")
 
 MARATHI_LABELS = {
     "issuer_name": "सह्योग मल्टीस्पेशालिटी हॉस्पिटल",

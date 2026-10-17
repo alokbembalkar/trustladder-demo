@@ -94,11 +94,43 @@ _PATTERNS = {
 }
 
 
-def read_fields(image: bytes) -> BillFields | None:
-    """The lookup fields as this reader saw them, or None if the layout was not found."""
+_SUMMARY_PATTERNS = {
+    "issuer_id": re.compile(r"Issuer\s*ID\s*:?\s*([A-Z0-9\-]{8,})", re.I),
+    "summary_no": re.compile(r"Summary\s*No\.?\s*:?\s*([A-Z]{2,4}/DS/\d{4}/\d{4,6})", re.I),
+    "uhid": re.compile(r"UHID\s*:?\s*([A-Z0-9\-]{5,})", re.I),
+    "patient": re.compile(r"Patient\s*:?\s*([A-Za-z][A-Za-z .]+)$", re.I | re.M),
+    "admitted": re.compile(r"Admission\s*:?\s*([0-9]{1,2}[-/ ][A-Za-z0-9]{2,3}[-/ ][0-9]{4})", re.I),
+    "discharged": re.compile(r"Discharge\s*:?\s*([0-9]{1,2}[-/ ][A-Za-z0-9]{2,3}[-/ ][0-9]{4})", re.I),
+    "ticket": re.compile(r"Ticket\s*:?\s*([A-Z0-9\-]{10,})", re.I),
+}
+
+
+def read_summary_fields(lines: list[str]):
+    """A discharge summary's lookup fields from OCR lines, or None if it is not one."""
+    from .models import DischargeFields
+    text = "\n".join(lines)
+    if not re.search(r"DISCHARGE\s*SUMMARY", text, re.I):
+        return None
+    found = {k: (p.search(text).group(1).strip() if p.search(text) else "") for k, p in _SUMMARY_PATTERNS.items()}
+    admitted = parse_date_iso(found["admitted"].replace(" ", "-")) if found["admitted"] else None
+    discharged = parse_date_iso(found["discharged"].replace(" ", "-")) if found["discharged"] else None
+    patient = found["patient"].strip()
+    if " " not in patient:
+        patient = ""
+    return DischargeFields(found["issuer_id"].upper(), lines[0] if lines else "", found["summary_no"].upper(),
+                           found["uhid"].upper(), patient, admitted or "", discharged or "", "", "", "",
+                           found["ticket"].upper().replace(" ", ""))
+
+
+def read_fields(image: bytes):
+    """The lookup fields as this reader saw them (BillFields or DischargeFields), or None
+    if neither layout was found."""
     lines = read_lines(image)
     if not lines:
         return None
+    summary = read_summary_fields(lines)
+    if summary is not None:
+        return summary
     text = "\n".join(lines)
     found = {}
     for key, pat in _PATTERNS.items():

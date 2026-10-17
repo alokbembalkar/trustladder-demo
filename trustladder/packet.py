@@ -105,10 +105,12 @@ def packet_findings(bill: BillFields | None, summary: SummaryResult) -> list[Fin
         return findings
 
     # --- the two documents against each other -----------------------------------
-    if canonical_name(bill.patient) != canonical_name(s.patient):
+    # A field a reader left blank is unknown, not different: nothing is held against a
+    # customer because a scan was hard to read.
+    if bill.patient and s.patient and canonical_name(bill.patient) != canonical_name(s.patient):
         findings.append(Finding(CROSS_DOCUMENT, "patient_differs",
                                 f"The bill is for {bill.patient} but the discharge summary is for {s.patient}."))
-    if bill.issuer_id != s.issuer_id:
+    if bill.issuer_id and s.issuer_id and bill.issuer_id != s.issuer_id:
         findings.append(Finding(CROSS_DOCUMENT, "issuer_differs",
                                 f"The bill is from {bill.issuer_name} but the discharge summary is from "
                                 f"{s.issuer_name}."))
@@ -125,7 +127,9 @@ def packet_findings(bill: BillFields | None, summary: SummaryResult) -> list[Fin
         pass
     surgical = [i.description for i in bill.items
                 if any(w in i.description.lower() for w in SURGICAL_ITEMS)]
-    if surgical and not s.procedure:
+    # Only a summary that STATES "none" contradicts a surgeon's fee. A blank procedure
+    # line means the reader did not see it, and silence is never evidence.
+    if surgical and s.procedure.strip().lower() in ("none", "nil", "no operation"):
         findings.append(Finding(
             CROSS_DOCUMENT, "surgery_billed_no_operation",
             f"The bill charges for {', '.join(surgical[:2]).lower()}, but the discharge summary records "
@@ -145,6 +149,9 @@ def summary_line(summary: SummaryResult | None) -> str:
         return f"A discharge summary was attached but could not be read: {summary.read_note}"
     s = summary.fields
     stay = f"{_nice(_dt.date.fromisoformat(s.admitted))} to {_nice(_dt.date.fromisoformat(s.discharged))}"
-    return (f"The discharge summary ({s.summary_no}) records {s.patient} in {s.issuer_name} from {stay}, "
-            f"diagnosis {s.diagnosis}, " + (f"operation {s.procedure}. " if s.procedure else "no operation. ")
+    proc = s.procedure.strip()
+    operation = ("no operation. " if proc.lower() in ("none", "nil", "no operation") else
+                 f"operation {proc}. " if proc else "operation line not read. ")
+    return (f"The discharge summary ({s.summary_no}) records {s.patient or 'the patient'} in {s.issuer_name} "
+            f"from {stay}" + (f", diagnosis {s.diagnosis}, " if s.diagnosis else ", ") + operation
             + f"Registry: {summary.registry_answer.value}.")

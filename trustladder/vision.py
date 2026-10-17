@@ -165,7 +165,8 @@ _PROMPT = (
     "{description, amount} with amount as a number), total (the grand total as a number)\n"
     "  For a discharge summary: summary_no (the summary or document number), uhid, admitted "
     "(date of admission, YYYY-MM-DD), discharged (date of discharge, YYYY-MM-DD), diagnosis, "
-    "procedure (the operation performed, or \"\" if none), consultant\n"
+    "procedure (the operation performed, or the word none if the summary says no operation was "
+    "performed, or \"\" if that line is not visible), consultant\n"
     "  confidence: an object with a number from 0 to 1 for each of issuer_id, patient, ticket and, "
     "for a bill, bill_no, bill_date, total; for a summary, summary_no, admitted, discharged: 1 means "
     "every character is clearly legible\n"
@@ -202,6 +203,19 @@ def _without_model(image: bytes, unavailable: bool = False) -> Reading:
     why = ("the reading model did not answer" if unavailable else "no reading model is configured")
     if ocr.available():
         fields = ocr.read_fields(image)
+        if isinstance(fields, DischargeFields):
+            partial = {"issuer_id": fields.issuer_id, "summary_no": fields.summary_no, "patient": fields.patient,
+                       "admitted": fields.admitted, "discharged": fields.discharged, "ticket": fields.ticket,
+                       "uhid": fields.uhid, "diagnosis": "", "procedure": "", "consultant": "",
+                       "issuer_name": fields.issuer_name}
+            blanks = [k for k in SUMMARY_LOOKUP_FIELDS if not partial.get(k)]
+            if not blanks:
+                return Reading(ReadStatus.OK, fields, "Read by the local deep OCR model; " + why + ".",
+                               source="vision model", model=ocr.MODEL_NAME, kind=KIND_SUMMARY)
+            return Reading(ReadStatus.COULD_NOT_READ, None,
+                           f"The local OCR model read the picture ({why}) but could not read every "
+                           "field. Please complete the details before submitting.",
+                           source="vision model", model=ocr.MODEL_NAME, partial=partial, kind=KIND_SUMMARY)
         if fields is not None:
             partial = {"issuer_id": fields.issuer_id, "bill_no": fields.bill_no,
                        "bill_date": fields.bill_date, "patient": fields.patient,
@@ -318,7 +332,15 @@ def _second_opinion(reading: Reading, image: bytes) -> None:
     if not ocr.available():
         return
     if reading.kind == KIND_SUMMARY:
-        # The OCR reader knows the bill layout only. No opinion is honest; a wrong one is not.
+        other = ocr.read_fields(image)
+        reading.second_reader = "deep OCR"
+        if not isinstance(other, DischargeFields):
+            reading.agree = None
+            return
+        mine = reading.fields
+        reading.agree = (canonical_ticket(mine.ticket) == canonical_ticket(other.ticket)
+                         and canonical_bill_no(mine.summary_no) == canonical_bill_no(other.summary_no)
+                         and mine.admitted == other.admitted and mine.discharged == other.discharged)
         return
     other = ocr.read_fields(image)
     reading.second_reader = "deep OCR"

@@ -56,8 +56,8 @@ def sample_pack_button(ctx: Ctx, key: str) -> None:
     if pack.exists():
         st.download_button("Download sample bills (zip)", pack.read_bytes(),
                            "TrustLadder_sample_bills.zip", mime="application/zip", key=key,
-                           help="What the demo's patient has on her phone: six PDFs and two photos, "
-                                "one of them printed in Marathi")
+                           help="What the demo's patient has on her phone: bills and discharge summaries in "
+                                "pairs, as PDFs, photos and scans; one bill printed in Marathi")
 
 
 def _status_chip(status: str) -> str:
@@ -287,7 +287,10 @@ def _reading_form(reading: vision.Reading, form_key: str) -> tuple[dict, bool]:
 
 
 def _guess_kind(d: list) -> str:
-    """What a packet document is: what was read, else what its name says."""
+    """What a packet document is: what was read, else what its name says.
+
+    Used to catch a document put in the wrong slot: a file that reads as a discharge
+    summary in the bill slot, or the other way round."""
     import re as _re
     reading, name = d[2], d[0].name
     if reading.fields is not None or reading.partial:
@@ -295,77 +298,77 @@ def _guess_kind(d: list) -> str:
     return KIND_SUMMARY if _re.search(r"summary|discharge", name, _re.I) else "bill"
 
 
+def _slot(ctx: Ctx, label: str, key: str, kind: str, help_: str) -> list | None:
+    """One document slot of the claim packet: the uploader, the preview or the reading
+    form, and what the customer confirmed. Returns [upload, data, reading, typed,
+    confirmed, picture, file_key] or None when the slot is empty.
+
+    The slot fixes what the document IS, so an unreadable scan never has to be guessed
+    at: a picture in slot 2 is a discharge summary, whatever the model could make of it.
+    """
+    up = st.file_uploader(label, type=["pdf", "jpg", "jpeg", "png"], key=key, help=help_)
+    if up is None:
+        return None
+    data = up.getvalue()
+    picture = _is_picture(data, up.name)
+    file_key = f"{key}:{up.name}:{len(data)}:{hash(data[:4096])}"
+    readings = st.session_state.setdefault("cs_readings", {})
+    if file_key not in readings:
+        with st.spinner(f"Reading {up.name}" + (" with a vision model…" if picture else "…")):
+            readings[file_key] = vision.read_any(data, up.name)
+    reading = readings[file_key]
+    d = [up, data, reading, {}, not picture, picture, file_key]
+    if _guess_kind(d) != kind and (reading.fields is not None or reading.partial):
+        other = "discharge summary" if kind == "bill" else "bill"
+        st.warning(f"`{up.name}` reads as a {other}. Put it in the other slot.")
+        d[4] = False
+        return d
+    if reading.kind != kind:
+        d[2] = reading = vision.Reading(**{**reading.__dict__, "kind": kind})
+    if not picture:
+        st.image(C.preview_png(data), width=380)
+    else:
+        left, right = st.columns([2, 3], gap="large")
+        with left:
+            st.image(C.preview_any(data, up.name), width="stretch")
+        with right:
+            d[3], d[4] = _reading_form(reading, f"rf_{abs(hash(file_key))}")
+    return d
+
+
 def customer_submit(ctx: Ctx) -> None:
     """The customer's only way in: the claim packet, uploaded on one screen.
 
-    A hospitalisation claim is a bill and, usually, a discharge summary. Both go in
-    the one box, as PDFs or photos, and one Submit sends the packet. Each file is
-    recognised for what it is (the text layer says so for a PDF; the vision model says
-    so for a picture), and each photo gets its own reading form to confirm. The bill
-    is the document the rule decides on; the summary is checked against it and against
-    the hospital's record, and the packet goes to a person if the two disagree.
+    A hospitalisation claim is two documents, and an insurer cannot accept it with one:
+    the bill, which is what gets paid, and the discharge summary, which says what the
+    stay was. Two labelled slots, one Submit. Each slot takes a PDF or a photo, shows
+    the document before anything is sent, and a photo gets its own reading form to
+    confirm. The rule decides on the bill; the summary is checked against it and
+    against the hospital's record, and the packet goes to a person if the two disagree.
     """
     cid = ctx.user["customer_id"]
-    page_title("Submit a claim", "Attach your hospital bill and, if you have it, the discharge summary, as "
-                                 "PDFs or photos. The claim is checked the moment you submit, and you are "
-                                 "told straight away where it stands.")
-    ups = st.file_uploader("Your claim documents (bill and discharge summary; PDF, JPG or PNG)",
-                           type=["pdf", "jpg", "jpeg", "png"], key="cs_upload", accept_multiple_files=True)
-    ups = ups or []
-    # Read every file once, keyed on its content, so a model is never re-run on a click.
-    docs = []           # (upload, data, reading, typed, confirmed, picture)
-    for up in ups:
-        data = up.getvalue()
-        picture = _is_picture(data, up.name)
-        file_key = f"{up.name}:{len(data)}:{hash(data[:4096])}"
-        readings = st.session_state.setdefault("cs_readings", {})
-        if file_key not in readings:
-            with st.spinner(f"Reading {up.name}" + (" with a vision model…" if picture else "…")):
-                readings[file_key] = vision.read_any(data, up.name)
-        reading = readings[file_key]
-        docs.append([up, data, reading, {}, not picture, picture, file_key])
-    if docs:
-        # The documents are shown BEFORE the Submit button, not after it: the one
-        # irreversible thing a customer does here deserves a look first.
-        st.markdown("**Check this is the right bill"
-                    + (" and discharge summary" if any(_guess_kind(d) == KIND_SUMMARY for d in docs) else "")
-                    + ", then submit.**")
-    for d in docs:
-        up, data, reading, _, _, picture, file_key = d
-        if picture and reading.fields is None and not reading.partial:
-            # Nothing could be read, so nothing says what this picture IS. The customer
-            # does, with the file name as the default. Without this an unread discharge
-            # summary was taken for a second bill and blocked the whole packet.
-            kinds = ["Bill", "Discharge summary"]
-            pick = st.radio(f"What is `{up.name}`?", kinds, horizontal=True,
-                            index=1 if _guess_kind(d) == KIND_SUMMARY else 0, key=f"kind_{abs(hash(file_key))}")
-            reading = vision.Reading(**{**reading.__dict__, "kind": KIND_SUMMARY if pick == kinds[1] else "bill"})
-            d[2] = reading
-        what = "Discharge summary" if reading.kind == KIND_SUMMARY else "Bill"
-        st.markdown(f"**{what}** · `{up.name}`")
-        if not picture:
-            # The document is shown BEFORE the Submit button, so it can be checked first.
-            st.image(C.preview_png(data), width=380)
-        else:
-            left, right = st.columns([2, 3], gap="large")
-            with left:
-                st.image(C.preview_any(data, up.name), width="stretch")
-            with right:
-                d[3], d[4] = _reading_form(reading, f"rf_{abs(hash(file_key))}")
-        st.write("")
-    bills = [d for d in docs if d[2].kind != KIND_SUMMARY]
-    summaries = [d for d in docs if d[2].kind == KIND_SUMMARY]
-    if ups and not bills:
-        st.warning("A claim needs the hospital bill. Add it to the packet; the discharge summary alone "
-                   "cannot be claimed.")
-    if len(bills) > 1:
-        st.warning("One claim, one bill. Submit the second bill as a separate claim.")
-    c1, c2 = st.columns([1, 3])
-    can_submit = len(bills) == 1 and all(d[4] for d in docs)
-    submitted = c1.button("Submit claim", type="primary", key="cs_submit", disabled=not can_submit)
+    page_title("Submit a claim", "Attach the hospital bill and the discharge summary, as PDFs or photos. Both "
+                                 "are needed. The claim is checked the moment you submit, and you are told "
+                                 "straight away where it stands.")
+    c1, c2 = st.columns(2, gap="large")
+    with c1:
+        st.markdown("**1. Hospital bill** · required")
+        bill = _slot(ctx, "Bill (PDF, JPG or PNG)", "cs_bill", "bill",
+                     "The final bill the hospital gave you")
     with c2:
+        st.markdown("**2. Discharge summary** · required")
+        summary = _slot(ctx, "Discharge summary (PDF, JPG or PNG)", "cs_summary", KIND_SUMMARY,
+                        "The discharge summary for the same stay")
+    docs = [d for d in (bill, summary) if d]
+    if docs and len(docs) < 2:
+        st.caption("Both documents are needed before the claim can be submitted.")
+    st.write("")
+    b1, b2 = st.columns([1, 3])
+    can_submit = bill is not None and summary is not None and all(d[4] for d in docs)
+    submitted = b1.button("Submit claim", type="primary", key="cs_submit", disabled=not can_submit)
+    with b2:
         sample_pack_button(ctx, "cs_pack")
-        if docs and not all(d[4] for d in docs):
+        if len(docs) == 2 and not all(d[4] for d in docs):
             st.caption("Confirm the details read from each photo to submit.")
     if submitted:
         # A bill that came in before is not refused: it is checked like any other,
@@ -373,14 +376,12 @@ def customer_submit(ctx: Ctx) -> None:
         # The audit trail names the PARTY who claimed, not the login they used:
         # "Customer" is a role label for the screen, and an auditor needs the person.
         # submit_claim falls back to the customer's own name when no actor is given.
-        b = bills[0]
-        bill_reading = vision.apply_corrections(b[2], b[3]) if b[5] else None
-        attachments = [(d[1], d[0].name, vision.apply_corrections(d[2], d[3]) if d[5] else d[2])
-                       for d in summaries]
+        bill_reading = vision.apply_corrections(bill[2], bill[3]) if bill[5] else None
+        summary_reading = vision.apply_corrections(summary[2], summary[3]) if summary[5] else summary[2]
         with st.spinner("Checking your claim…"):
-            st.session_state.cs_last = submit_claim(ctx.store, ctx.verifier, cid, b[1], b[0].name,
-                                                    reading=bill_reading, background=True,
-                                                    attachments=attachments)
+            st.session_state.cs_last = submit_claim(
+                ctx.store, ctx.verifier, cid, bill[1], bill[0].name, reading=bill_reading, background=True,
+                attachments=[(summary[1], summary[0].name, summary_reading)])
     last = st.session_state.get("cs_last")
     if last:
         c = ctx.store.claim(last)

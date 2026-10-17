@@ -109,12 +109,12 @@ STEPS = [
      "ticket on each and sends the registry two scrambled codes per document. No patient data leaves "
      "the hospital."),
     ("customer", "Submit a claim", "Customer uploads",
-     "**First**, attach the bill **and** the discharge summary you just downloaded, together, and press "
+     "**First**, put the bill you downloaded in slot 1 and the discharge summary in slot 2, and press "
      "**Submit claim**. "
-     "**Then** press **Download sample bills**, attach file **03**, the Marathi bill photo, "
-     "check what the vision model read, tick the box and submit. "
-     "**Last**, open **Demo toolkit** in the sidebar, press **Download the edited copy**, and attach "
-     "that.",
+     "**Then** press **Download sample bills**: file **03**, the Marathi bill photo, in slot 1 and file "
+     "**04**, its summary, in slot 2; check what the vision model read, tick the boxes and submit. "
+     "**Last**, open **Demo toolkit** in the sidebar, press **Download the edited copy**, put it in slot 1 "
+     "with the same discharge summary in slot 2, and submit.",
      "One screen takes the whole claim packet, and the customer never says which kind of file it is. "
      "The first packet is a bill and a discharge summary, read exactly; the hospital's record confirms "
      "both and the dates agree, so it is paid at once with no officer involved. The second is a "

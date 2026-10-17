@@ -142,9 +142,11 @@ def read_summary(pdf_bytes: bytes) -> tuple[ReadStatus, "DischargeFields | None"
     if missing:
         return (ReadStatus.COULD_NOT_READ, None,
                 "Could not read with confidence: " + ", ".join(missing) + ".")
+    # "none" is a statement (no operation took place); "" means the line was not read.
+    # The packet check charges a surgeon's fee against a stated "none", never against silence.
     procedure = found["procedure"]
     if procedure.lower() in ("none", "nil", "no operation", "-"):
-        procedure = ""
+        procedure = "none"
     fields = DischargeFields(
         issuer_id=found["issuer_id"], issuer_name=text.strip().splitlines()[0].strip(),
         summary_no=found["summary_no"], uhid=found["uhid"], patient=found["patient"],

@@ -548,9 +548,9 @@ def test_tc58_there_is_exactly_one_place_to_upload_a_bill():
     gone, so a genuine bill and a tampered one arrive by the same door."""
     import zipfile
     at = _go(_login("customer"), "customer", "Submit a claim")
-    assert at.get("file_uploader"), "the customer must be able to upload"
+    assert [f.key for f in at.get("file_uploader")] == ["cs_bill", "cs_summary"], "two slots: bill and summary"
     assert not [r for r in at.radio if r.key in ("cs_pick", "cs_source")], "no document list any more"
-    assert at.button(key="cs_submit").disabled, "Submit waits for a file"
+    assert at.button(key="cs_submit").disabled, "Submit waits for both documents"
     assert any(b.label.startswith("Download sample bills") for b in at.get("download_button"))
 
     assert MENUS["officer"] == ["Claims inbox"], "the officer reviews claims; it is not an upload desk"
@@ -560,8 +560,8 @@ def test_tc58_there_is_exactly_one_place_to_upload_a_bill():
             assert not other.get("file_uploader"), f"{role} / {page} must not offer a second uploader"
 
     names = zipfile.ZipFile(DATA_DIR / "TrustLadder_sample_bills.zip").namelist()
-    assert len([n for n in names if n.endswith(".pdf")]) == 6
-    assert len([n for n in names if n.endswith(".jpg")]) == 4, "two photographs and two scanned discharge summaries"
+    assert len([n for n in names if n.endswith(".pdf")]) == 8
+    assert len([n for n in names if n.endswith(".jpg")]) == 7, "two photographs and five scanned discharge summaries"
     assert any(n.endswith("README.txt") for n in names)
 
 
@@ -627,8 +627,8 @@ def test_tc63_only_one_upload_box_on_the_screen_that_takes_the_forged_copy():
     assert at.session_state["step"] == 1, "step 2 of the guided story"
     assert not at.exception
     uploaders = at.get("file_uploader")
-    assert len(uploaders) == 1, f"expected one upload box on the customer step, found {len(uploaders)}"
-    assert uploaders[0].key == "cs_upload", "the one upload box is the customer's claim form"
+    assert len(uploaders) == 2, f"expected the claim form's two slots on the customer step, found {len(uploaders)}"
+    assert {x.key for x in uploaders} == {"cs_bill", "cs_summary"}, "the claim form's two slots, nowhere else"
     assert any("toolkit" in (e.label or "").lower() for e in at.get("expander")), \
         "the toolkit is still there; it just does not ask for a file"
 
@@ -1059,9 +1059,10 @@ def test_tc78_customer_packet_needs_a_bill_and_submits_once():
     and the discharge summary together; no second uploader anywhere."""
     at = _go(_login("customer"), "customer", "Submit a claim")
     ups = at.get("file_uploader")
-    assert len(ups) == 1 and "bill and discharge summary" in ups[0].label
+    assert [x.key for x in ups] == ["cs_bill", "cs_summary"]
     assert at.button(key="cs_submit").disabled
-    assert "discharge summary" in _texts(at)
+    texts = _texts(at)
+    assert "1. Hospital bill" in texts and "2. Discharge summary" in texts and "required" in texts
 
 
 def test_tc79_officer_sees_the_packets_second_document_and_the_cross_document_finding():
