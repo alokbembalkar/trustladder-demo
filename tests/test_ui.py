@@ -1088,3 +1088,23 @@ def test_tc79_officer_sees_the_packets_second_document_and_the_cross_document_fi
     at = _login("officer")
     _open_claim(at, other["claim_id"])
     assert "No discharge summary was attached" in _texts(at)
+
+
+def test_tc80_an_unread_scan_is_not_assumed_to_be_a_bill(monkeypatch):
+    """TC-80. Steps: with the models off, feed the customer screen two unreadable pictures
+    named like a bill photo and a discharge summary (AppTest cannot drive the uploader,
+    so the screen's own helper is exercised with stand-ins).
+    Expected: the summary-named file is offered as a discharge summary by default and the
+    bill-named one as a bill, so the packet has one bill and the customer is not told
+    'one claim, one bill'."""
+    from types import SimpleNamespace
+    from trustladder import vision
+    from trustladder.models import ReadStatus
+    from ui.pages import _guess_kind
+    unread = vision.Reading(ReadStatus.COULD_NOT_READ, None, "no model", source="none")
+    bill = [SimpleNamespace(name="08_marathi_bill_photo.jpg"), b"", unread, {}, False, True, "k1"]
+    summ = [SimpleNamespace(name="09_discharge_summary_for_bill_1.jpg"), b"", unread, {}, False, True, "k2"]
+    assert _guess_kind(bill) == "bill" and _guess_kind(summ) == "discharge summary"
+    read_summary = vision.Reading(ReadStatus.OK, None, "x", source="vision model", kind="discharge summary",
+                                  partial={"summary_no": "X"})
+    assert _guess_kind([SimpleNamespace(name="bill.jpg"), b"", read_summary, {}, False, True, "k3"]) == "discharge summary"

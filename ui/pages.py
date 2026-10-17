@@ -286,6 +286,15 @@ def _reading_form(reading: vision.Reading, form_key: str) -> tuple[dict, bool]:
     return typed, confirmed
 
 
+def _guess_kind(d: list) -> str:
+    """What a packet document is: what was read, else what its name says."""
+    import re as _re
+    reading, name = d[2], d[0].name
+    if reading.fields is not None or reading.partial:
+        return reading.kind
+    return KIND_SUMMARY if _re.search(r"summary|discharge", name, _re.I) else "bill"
+
+
 def customer_submit(ctx: Ctx) -> None:
     """The customer's only way in: the claim packet, uploaded on one screen.
 
@@ -315,15 +324,23 @@ def customer_submit(ctx: Ctx) -> None:
                 readings[file_key] = vision.read_any(data, up.name)
         reading = readings[file_key]
         docs.append([up, data, reading, {}, not picture, picture, file_key])
-    bills = [d for d in docs if d[2].kind != KIND_SUMMARY]
-    summaries = [d for d in docs if d[2].kind == KIND_SUMMARY]
     if docs:
         # The documents are shown BEFORE the Submit button, not after it: the one
         # irreversible thing a customer does here deserves a look first.
-        st.markdown("**Check this is the right bill" + (" and discharge summary" if summaries else "")
+        st.markdown("**Check this is the right bill"
+                    + (" and discharge summary" if any(_guess_kind(d) == KIND_SUMMARY for d in docs) else "")
                     + ", then submit.**")
     for d in docs:
         up, data, reading, _, _, picture, file_key = d
+        if picture and reading.fields is None and not reading.partial:
+            # Nothing could be read, so nothing says what this picture IS. The customer
+            # does, with the file name as the default. Without this an unread discharge
+            # summary was taken for a second bill and blocked the whole packet.
+            kinds = ["Bill", "Discharge summary"]
+            pick = st.radio(f"What is `{up.name}`?", kinds, horizontal=True,
+                            index=1 if _guess_kind(d) == KIND_SUMMARY else 0, key=f"kind_{abs(hash(file_key))}")
+            reading = vision.Reading(**{**reading.__dict__, "kind": KIND_SUMMARY if pick == kinds[1] else "bill"})
+            d[2] = reading
         what = "Discharge summary" if reading.kind == KIND_SUMMARY else "Bill"
         st.markdown(f"**{what}** · `{up.name}`")
         if not picture:
@@ -336,6 +353,8 @@ def customer_submit(ctx: Ctx) -> None:
             with right:
                 d[3], d[4] = _reading_form(reading, f"rf_{abs(hash(file_key))}")
         st.write("")
+    bills = [d for d in docs if d[2].kind != KIND_SUMMARY]
+    summaries = [d for d in docs if d[2].kind == KIND_SUMMARY]
     if ups and not bills:
         st.warning("A claim needs the hospital bill. Add it to the packet; the discharge summary alone "
                    "cannot be claimed.")
