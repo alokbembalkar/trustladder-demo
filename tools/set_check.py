@@ -69,6 +69,8 @@ def main() -> None:
             sign_in(pg, "customer")
             pg.get_by_text("Submit a claim", exact=True).first.click()
             settle(pg)
+            # The free host reruns slowly: wait for the slots rather than count at once.
+            pg.wait_for_selector("[data-testid='stMain'] input[type='file']", state="attached", timeout=SLOW)
             slots = pg.locator("[data-testid='stMain'] input[type='file']")
             if slots.count() != 2:
                 fail(f"{folder.name}: expected two slots, found {slots.count()}")
@@ -78,12 +80,12 @@ def main() -> None:
             slots.nth(1).set_input_files(str(summary))
             settle(pg)
             for _ in range(90):
-                if pg.get_by_role("button", name="Submit claim").is_enabled():
+                if pg.get_by_role("button", name="Submit claim").last.is_enabled():
                     break
                 pg.wait_for_timeout(1000)
             else:
                 fail(f"{folder.name}: Submit stayed disabled with both PDFs attached")
-            pg.get_by_role("button", name="Submit claim").click()
+            pg.get_by_role("button", name="Submit claim").last.click()
             settle(pg)
             pg.wait_for_selector("[data-testid='tl-claim-status']", timeout=SLOW)
             status = pg.locator("[data-testid='tl-claim-status']").last.inner_text().strip()
