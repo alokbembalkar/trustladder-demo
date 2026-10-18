@@ -1,5 +1,5 @@
 """
-Engine test cases (TC-01 .. TC-17).
+Engine test cases (TC-01 .. TC-34).
 
 Each test is one formal test case: its docstring states the steps and the
 expected result. These cover the verdicts, the reasons and the registry; the
@@ -807,3 +807,80 @@ def test_tc31_a_packet_that_does_not_add_up_goes_to_a_person_even_on_a_proven_bi
     cd = store2.claim(d)
     assert cd["verdict"] == "Tampered" and cd["rule"].startswith("R3")
     assert CROSS_DOCUMENT in cd["result_json"]
+
+
+# ---------------------------------------------------------------- fixed tickets and the Marathi set (TC-33 .. TC-34)
+
+def test_tc33_the_sample_documents_carry_the_same_tickets_on_every_build():
+    """TC-33. Steps: build the showcase twice into two empty folders; read the ticket off
+    bill 1 in each; check the fixed tickets on the summaries and the Arogya bill in the
+    built world. Expected: the same ticket on bill 1 in both builds (a presenter's saved
+    copy still matches the registry after the site is rebuilt); the summaries the patient
+    holds carry the tickets fixed in cases.py; a ticket issued LIVE is still random."""
+    import tempfile
+    from trustladder.cases import (AROGYA_BILL_TICKET, SUMMARY_FOR_AROGYA, SUMMARY_FOR_BILL_1,
+                                   SUMMARY_FOR_MARATHI, build_showcase)
+    from trustladder.seed import db_path
+    from trustladder.store import Store
+    tickets = []
+    for _ in range(2):
+        out = build_showcase(Path(tempfile.mkdtemp()))
+        tickets.append(read_bill((out / "01_genuine_bill.pdf").read_bytes())[1].ticket)
+    assert tickets[0] == tickets[1] and tickets[0].startswith("SH-")
+    # ... and the live world, built by the session fixture, agrees with a third build.
+    assert read_bill((DATA_DIR / "showcase" / "01_genuine_bill.pdf").read_bytes())[1].ticket == tickets[0]
+    world = Store(db_path(DATA_DIR))
+    by_no = {s["summary_no"]: s["ticket"] for s in world.summaries_of_issuer("IN-HOSP-SAHYOG-PUN-0101")}
+    assert by_no[SUMMARY_FOR_BILL_1.summary_no] == SUMMARY_FOR_BILL_1.ticket == "SH-DS4K-7NQP-2RXV-M9TW"
+    assert by_no[SUMMARY_FOR_MARATHI.summary_no] == SUMMARY_FOR_MARATHI.ticket
+    arogya = {b["bill_no"]: b["ticket"] for b in world.bills_of_issuer("IN-HOSP-AROGYA-NSK-0233")}
+    assert AROGYA_BILL_TICKET in arogya.values()
+    assert {s["ticket"] for s in world.summaries_of_issuer("IN-HOSP-AROGYA-NSK-0233")} == {SUMMARY_FOR_AROGYA.ticket}
+    # Live issuing is not seeded: two fresh tickets differ.
+    store = RegistryStore(DATA_DIR)
+    pub = Publisher(store, "IN-HOSP-SAHYOG-PUN-0101")
+    assert pub.new_ticket() != pub.new_ticket()
+
+
+def test_tc34_the_bilingual_marathi_documents_read_exactly_and_the_raised_copy_is_tampered():
+    """TC-34. Steps: read the three Marathi PDFs under assets/samples (the hospital's
+    bilingual bill, the same bill with its total raised, the bilingual discharge summary)
+    from their text layers, with no model; submit the genuine pair and then the raised
+    pair on one policy. Expected: every field read exactly from the text layer (no model
+    involved), the summary recognised as a summary with its fixed ticket; the genuine
+    pair Authentic and Paid with no cross-document finding; the raised copy Tampered and
+    held, with the file-history evidence listed and the raised total read as Rs 1,53,650."""
+    import tempfile
+    from trustladder import vision
+    from trustladder.cases import MARATHI_BILL, ROOT, SUMMARY_FOR_MARATHI
+    from trustladder.models import CROSS_DOCUMENT
+    from trustladder.service import submit_claim
+    from trustladder.store import Store
+    samples = ROOT / "assets" / "samples"
+    bill = vision.read_any((samples / "marathi_bill.pdf").read_bytes(), "marathi_bill.pdf")
+    assert bill.status is ReadStatus.OK and bill.source == "text layer" and bill.model == ""
+    assert (bill.fields.bill_no, bill.fields.ticket, bill.fields.total_paise, bill.fields.patient) == (
+        MARATHI_BILL.bill_no, MARATHI_BILL.ticket, MARATHI_BILL.total_paise, "Meera Kulkarni")
+    raised = vision.read_any((samples / "marathi_bill_total_raised.pdf").read_bytes(), "raised.pdf")
+    assert raised.status is ReadStatus.OK and raised.fields.total_paise == 15365000
+    summary = vision.read_any((samples / "marathi_discharge_summary.pdf").read_bytes(), "ds.pdf")
+    assert summary.status is ReadStatus.OK and summary.kind == "discharge summary"
+    assert (summary.fields.summary_no, summary.fields.ticket, summary.fields.admitted, summary.fields.discharged,
+            summary.fields.procedure) == (SUMMARY_FOR_MARATHI.summary_no, SUMMARY_FOR_MARATHI.ticket,
+                                          "2026-03-02", "2026-03-05", "none")
+
+    verifier = Verifier(RegistryStore(DATA_DIR))
+    store = Store(Path(tempfile.mkdtemp()) / "m.db"); store.add_customer("C1", "Meera Kulkarni", "Pune")
+    ds = (samples / "marathi_discharge_summary.pdf").read_bytes()
+    a = submit_claim(store, verifier, "C1", (samples / "marathi_bill.pdf").read_bytes(), "03.pdf",
+                     attachments=[(ds, "04.pdf", None)])
+    ca = store.claim(a)
+    assert (ca["verdict"], ca["status"]) == ("Authentic", "Paid"), ca["reason"]
+    assert CROSS_DOCUMENT not in ca["result_json"]
+    assert '"registry_answer": "Verified"' in store.claim_documents(a)[0]["result_json"]
+    b = submit_claim(store, verifier, "C1", (samples / "marathi_bill_total_raised.pdf").read_bytes(), "07.pdf",
+                     attachments=[(ds, "08.pdf", None)])
+    cb = store.claim(b)
+    assert cb["verdict"] == "Tampered" and cb["status"] == "On hold", (cb["verdict"], cb["status"], cb["reason"])
+    assert cb["rule"].startswith("R2"), "the issuer contradicts the raised copy: proof, not a hint"
+    assert "incremental_saves" in cb["result_json"] and "QuickEdit" in cb["reason"]

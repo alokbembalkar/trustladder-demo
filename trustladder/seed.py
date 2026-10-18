@@ -27,7 +27,7 @@ from pathlib import Path
 
 from .bills import (photo_of, random_bill, render_altered, render_discharge_summary, render_discount_resaved,
                     render_fabricated, render_genuine, render_resaved, render_scan)
-from .cases import (DATA_DIR, HOSPITALS, MARATHI_BILL, ROOT, SUMMARY_DATES_MISMATCH, SUMMARY_FAKE_SAHYOG,
+from .cases import (AROGYA_BILL_TICKET, DATA_DIR, HOSPITALS, MARATHI_BILL, ROOT, SUMMARY_DATES_MISMATCH, SUMMARY_FAKE_SAHYOG,
                     SUMMARY_FAKE_SHANTI, SUMMARY_FOR_AROGYA, SUMMARY_FOR_BILL_1, SUMMARY_FOR_MARATHI,
                     SUMMARY_FOR_SHANTI, build_showcase, build_simulation)
 from .models import BillFields, DischargeFields
@@ -222,6 +222,7 @@ def build_world(data_dir: Path = DATA_DIR) -> Store:
     #    a second bill she holds: an Arogya bill, issued and published, never claimed. It is
     #    the "original" she can send if a claim of hers is ever sent back for a clearer copy.
     ab = _bill_for(rng, "IN-HOSP-AROGYA-NSK-0233", meera, 3301, 8)
+    ab.ticket = AROGYA_BILL_TICKET          # fixed, so her copy survives a rebuild of the world
     arogya_pdf = issue_bill(store, registry, verifier, ab, meera[0], "Arogya billing", "2026-03-08 16:05")
     #    the photograph she took of that Arogya bill's printout: the vision model's English case
     (showcase / "05_photo_of_arogya_bill.jpg").write_bytes(photo_of(arogya_pdf, seed=5))

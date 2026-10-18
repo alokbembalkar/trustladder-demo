@@ -13,7 +13,9 @@ Two rules from the proposal are enforced here:
    its own queue. It is never allowed to fall through to a registry comparison
    that would report a genuine bill as not matching.
 
-This demo reads the PDF's text layer, which is exact for born-digital bills.
+This demo reads the PDF's text layer, which is exact for born-digital bills (two
+extractors, see `pdf_text`, so a browser-printed bilingual bill reads as exactly as a
+billing system's English one).
 Reading scans and photos needs an OCR / document-understanding model
 (LayoutLM / Donut families in the proposal); that model would plug in here and
 report a confidence per field. Without a text layer this demo reports
@@ -199,13 +201,57 @@ def _read_items(text: str) -> list[LineItem]:
     return items
 
 
-def pdf_text(pdf_bytes: bytes) -> str:
-    """All text on all pages, or '' if the document has no text layer."""
+# The proof that an extraction carried the field labels through intact. Bills and
+# discharge summaries both print their number with this label.
+_LABELLED = re.compile(r"(Bill No|Summary No):\s*\S")
+
+
+def _pypdf_text(pdf_bytes: bytes) -> str:
     try:
         reader = PdfReader(io.BytesIO(pdf_bytes))
         return "\n".join((page.extract_text() or "") for page in reader.pages)
     except Exception:
         return ""
+
+
+def _pdfium_text(pdf_bytes: bytes) -> str:
+    """The same text layer as Chromium's PDF engine reads it (pypdfium2)."""
+    try:
+        import pypdfium2 as pdfium
+    except ImportError:
+        return ""
+    try:
+        doc = pdfium.PdfDocument(pdf_bytes)
+        parts = []
+        for page in doc:
+            textpage = page.get_textpage()
+            parts.append(textpage.get_text_bounded())
+            textpage.close()
+            page.close()
+        doc.close()
+        return "\n".join(parts).replace("\r\n", "\n")
+    except Exception:
+        return ""
+
+
+def pdf_text(pdf_bytes: bytes) -> str:
+    """All text on all pages, or '' if the document has no text layer.
+
+    Two extractors read the text layer: pypdf first, then Chromium's PDF engine. A PDF
+    printed by a browser (a hospital's bilingual Marathi bill, for instance) positions
+    every word separately and embeds subsetted fonts, and pypdf then returns "Bill  No :"
+    with stray spaces and unmapped glyphs; pdfium reads the same file cleanly. The text
+    taken is the first in which the field labels came through intact, so a document the
+    first extractor garbles is still read exactly, and a document with no text layer at
+    all (a scan) is still '', which sends it to the picture readers.
+    """
+    first = _pypdf_text(pdf_bytes)
+    if _LABELLED.search(first):
+        return first
+    second = _pdfium_text(pdf_bytes)
+    if _LABELLED.search(second):
+        return second
+    return first or second
 
 
 def read_bill(pdf_bytes: bytes) -> tuple[ReadStatus, BillFields | None, str]:

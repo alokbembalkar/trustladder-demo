@@ -62,13 +62,19 @@ TICKET_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
 TICKET_LENGTH = 16
 
 
-def new_ticket(prefix: str) -> str:
+def new_ticket(prefix: str, rng=None) -> str:
     """Return a fresh random ticket such as 'SH-7K2P-9QX4-8M31-RT5W'.
 
     The prefix identifies the issuer to a human reader; the 16 random characters
     are what make the ticket unguessable. Grouped in fours for legibility.
+
+    `rng` is for the seeded demo world only: a `random.Random` makes the sample
+    documents carry the same tickets on every build, so a file saved from one build
+    still matches the registry of the next. Live issuing never passes it, and uses
+    the operating system's secret source.
     """
-    body = "".join(secrets.choice(TICKET_ALPHABET) for _ in range(TICKET_LENGTH))
+    choice = rng.choice if rng is not None else secrets.choice
+    body = "".join(choice(TICKET_ALPHABET) for _ in range(TICKET_LENGTH))
     groups = [body[i:i + 4] for i in range(0, TICKET_LENGTH, 4)]
     return prefix + "-" + "-".join(groups)
 

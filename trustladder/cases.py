@@ -90,9 +90,12 @@ SHOWCASE_PATIENT = "Meera Kulkarni"
 MARATHI_BILL = BillFields(
     "IN-HOSP-SAHYOG-PUN-0101", "Sahyog Multispeciality Hospital", "SMH/2026/004877", "2026-03-05",
     SHOWCASE_PATIENT,
-    [LineItem("Room charges (semi-private)", 2400000), LineItem("Surgeon fee", 5500000),
-     LineItem("Pharmacy and consumables", 1825000), LineItem("Laboratory investigations", 640000)],
+    [LineItem("Room charges (semi-private)", 2400000), LineItem("Consultant visits and nursing care", 2550000),
+     LineItem("Pharmacy and consumables", 3825000), LineItem("Radiology (ultrasound)", 950000),
+     LineItem("Laboratory investigations", 640000)],
     10365000, "SH-WTKU-SZUF-7M7G-ARRC")
+# Its discharge summary (below) records a medical stay with no operation, and the bill agrees:
+# no surgeon's fee. The pair is coherent to anyone who reads the Marathi.
 # The discharge summaries in the sample pack. One belongs to bill 1 and is confirmed by the
 # hospital. The other is the mismatched-dates case: a genuine-looking summary from the
 # hospital that has not joined, whose stay does not contain the date of bill 4. Nothing
@@ -102,12 +105,18 @@ from .models import DischargeFields  # noqa: E402
 SUMMARY_FOR_BILL_1 = DischargeFields(
     "IN-HOSP-SAHYOG-PUN-0101", "Sahyog Multispeciality Hospital", "SMH/DS/2026/001184", "SMH-UH-204117",
     SHOWCASE_PATIENT, "2026-02-27", "2026-03-03", "Acute calculous cholecystitis",
-    "Laparoscopic cholecystectomy under general anaesthesia on 28-Feb-2026", "Dr. A. Deshmukh, MS")
+    "Laparoscopic cholecystectomy under general anaesthesia on 28-Feb-2026", "Dr. A. Deshmukh, MS",
+    ticket="SH-DS4K-7NQP-2RXV-M9TW")
+# The tickets on the documents the demo's patient holds are FIXED (the ones below, and
+# the showcase's seeded generator) so a copy saved from one build of the demo world still
+# matches the registry of the next build. Anything issued live gets a random ticket.
+AROGYA_BILL_TICKET = "AR-K7PT-4MNW-9RXQ-3HVZ"
 # The rest of the pack's summaries. A claim needs both documents, so every bill in the
 # pack has the summary that belongs with it: the stay contains the bill's date.
 SUMMARY_FOR_MARATHI = DischargeFields(
     "IN-HOSP-SAHYOG-PUN-0101", "Sahyog Multispeciality Hospital", "SMH/DS/2026/001209", "SMH-UH-204331",
-    SHOWCASE_PATIENT, "2026-03-02", "2026-03-05", "Acute pyelonephritis", "none", "Dr. S. Phadke, MD")
+    SHOWCASE_PATIENT, "2026-03-02", "2026-03-05", "Acute pyelonephritis", "none", "Dr. S. Phadke, MD",
+    ticket="SH-R8MV-3KPT-9WQX-4NHZ")
 SUMMARY_FAKE_SAHYOG = DischargeFields(          # typed by the forger to go with the fake bill
     "IN-HOSP-SAHYOG-PUN-0101", "Sahyog Multispeciality Hospital", "SMH/DS/2026/001260", "SMH-UH-204502",
     SHOWCASE_PATIENT, "2026-03-08", "2026-03-11", "Acute appendicitis",
@@ -118,7 +127,8 @@ SUMMARY_FOR_SHANTI = DischargeFields(           # matches bill 04 of the showcas
     "Lower-segment caesarean section under spinal anaesthesia on 05-Mar-2026", "Dr. P. Jagtap, MD")
 SUMMARY_FOR_AROGYA = DischargeFields(           # matches the Arogya bill Meera holds (dated 8 March)
     "IN-HOSP-AROGYA-NSK-0233", "Arogya Nursing Home", "ANH/DS/2026/000871", "ANH-UH-5519",
-    SHOWCASE_PATIENT, "2026-03-06", "2026-03-08", "Dengue fever with thrombocytopenia", "none", "Dr. N. Pawar, MD")
+    SHOWCASE_PATIENT, "2026-03-06", "2026-03-08", "Dengue fever with thrombocytopenia", "none", "Dr. N. Pawar, MD",
+    ticket="AR-N5WK-8QRT-2MXP-7VJH")
 SUMMARY_FAKE_SHANTI = DischargeFields(          # the forger's summary for the fake Shanti bill (9 March)
     "IN-HOSP-SHANTI-STR-0419", "Shanti Clinic and Maternity Home", "SCM/DS/2026/000420", "SCM-UH-7740",
     SHOWCASE_PATIENT, "2026-03-08", "2026-03-09", "Incomplete abortion",
@@ -134,8 +144,16 @@ MARATHI_LABELS = {
     "bill_date": "बिल दिनांक", "patient": "रुग्ण", "ticket": "तिकीट",
     "ticket_note": "हे बिल TrustLadder नोंदणीद्वारे रुग्णालयाकडून पडताळता येते.",
     "description": "विवरण", "amount": "रक्कम (रु)", "total": "एकूण",
-    "items": ["खोली शुल्क (सेमी-प्रायव्हेट)", "शल्यचिकित्सक शुल्क", "औषधे आणि उपभोग्य वस्तू",
-              "प्रयोगशाळा तपासण्या"],
+    "items": ["खोली शुल्क (सेमी-प्रायव्हेट)", "सल्लागार भेटी आणि परिचर्या", "औषधे आणि उपभोग्य वस्तू",
+              "रेडिओलॉजी (सोनोग्राफी)", "प्रयोगशाळा तपासण्या"],
+    # Bilingual labels for the born-digital Marathi documents (tools/make_marathi_sample.py):
+    # Indian hospital software prints the English field name beside the Marathi one, and the
+    # text-layer reader finds its fields by the English label.
+    "summary_title": "डिस्चार्ज सारांश", "summary_no": "सारांश क्रमांक", "uhid": "UHID",
+    "admitted": "दाखल दिनांक", "discharged": "डिस्चार्ज दिनांक", "consultant": "सल्लागार",
+    "diagnosis": "निदान", "operation": "शस्त्रक्रिया", "course": "रुग्णालयातील वाटचाल",
+    "condition": "डिस्चार्जच्या वेळी स्थिती", "advice": "डिस्चार्जनंतरचा सल्ला",
+    "summary_note": "हा सारांश TrustLadder नोंदणीद्वारे रुग्णालयाकडून पडताळता येतो.",
     "footer": "IIM-V कॅपस्टोन प्रात्यक्षिकासाठी तयार केलेला कृत्रिम दस्तऐवज (गट 7). हे खरे बिल नाही.",
 }
 
@@ -177,15 +195,19 @@ def build_showcase(data_dir: Path = DATA_DIR, patient: str = SHOWCASE_PATIENT) -
     _enrol(store, SHOWCASE_JOINED)
     sahyog = Publisher(store, "IN-HOSP-SAHYOG-PUN-0101")
     rng = random.Random(2026)
+    # The tickets are drawn from a seeded generator so that every build of the demo
+    # world prints the same ticket on the same sample bill. A presenter keeps copies of
+    # these files; they must still match the registry after the site is rebuilt.
+    tickets = random.Random(7)
     out = data_dir / "showcase"
     out.mkdir(parents=True, exist_ok=True)
 
     # 1. The bill as issued, published by the hospital, plus that day's other bills.
-    bill = _headline_bill(sahyog.new_ticket(), patient)
+    bill = _headline_bill(sahyog.new_ticket(tickets), patient)
     background = [random_bill(rng, bill.issuer_id, bill.issuer_name, "SMH", 4800 + i, "2026-03-03")
                   for i in range(11)]
     for b in background:
-        b.ticket = sahyog.new_ticket()
+        b.ticket = sahyog.new_ticket(tickets)
     sahyog.publish([bill] + background)
     (out / SHOWCASE[0][0]).write_bytes(render_genuine(bill, joined=True))
 
@@ -194,7 +216,7 @@ def build_showcase(data_dir: Path = DATA_DIR, patient: str = SHOWCASE_PATIENT) -
 
     # 3. A bill typed from a blank page: same patient and hospital, never issued.
     fake = BillFields(**{**bill.__dict__, "bill_no": "SMH/2026/004907", "bill_date": "2026-03-11",
-                         "ticket": sahyog.new_ticket()})       # right format, never published
+                         "ticket": sahyog.new_ticket(tickets)})  # right format, never published
     (out / SHOWCASE[2][0]).write_bytes(render_fabricated(fake, joined=True))
 
     # 4. The same patient, at a hospital that has not joined the registry.

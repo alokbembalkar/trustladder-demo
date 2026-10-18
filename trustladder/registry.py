@@ -116,9 +116,10 @@ class Publisher:
         key_file = store.keys_dir / f"{issuer_id}.json"
         self._private_key = json.loads(key_file.read_text())["private_key"]
 
-    def new_ticket(self) -> str:
-        """The random reference that gets printed on the bill."""
-        return crypto.new_ticket(self.ticket_prefix)
+    def new_ticket(self, rng=None) -> str:
+        """The random reference that gets printed on the bill (seeded only when the demo
+        world is built, so the sample files survive a rebuild; see `crypto.new_ticket`)."""
+        return crypto.new_ticket(self.ticket_prefix, rng)
 
     def entry_for(self, bill) -> list[str]:
         """Return the [key, value] pair for one document (a bill or a discharge
