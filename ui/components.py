@@ -190,6 +190,77 @@ def techniques_panel(rows: list[dict]) -> None:
     st.markdown("".join(html), unsafe_allow_html=True)
 
 
+def hospital_techniques(bill, summary) -> None:
+    """What the hospital's screen did at issue, technique by technique. No AI here, and
+    the box says so: issuing is cryptography and a random ticket."""
+    from trustladder import crypto
+    rows = [
+        ("Random ticket", "Unguessable reference, printed only on the document",
+         f"{bill.ticket} on the bill, {summary.ticket} on the summary: the hospital's prefix plus "
+         f"{crypto.TICKET_LENGTH} characters from a {len(crypto.TICKET_ALPHABET)}-symbol alphabet (no 0/O, 1/I/L), "
+         "about 2⁷⁹ possibilities. The ticket is the secret; it exists only on the paper."),
+        ("Hash commitment", "scrypt, one-way, per-hospital salt",
+         f"Two {crypto.CODE_BYTES}-byte codes per document, scrypt with N = 2¹³, r = 8, p = 1: one answers "
+         "\"does this ticket exist\", the other \"are the details as issued\" (ticket, number, date, patient, "
+         "total in one standard form). The salt is published; a code cannot be run backwards."),
+        ("Digital signature", "Ed25519, append-only file",
+         "Each batch is signed with the hospital's own private key and appended to its file. The registry "
+         "host can store it and cannot alter or forge it; anyone can check it with the public key."),
+        ("Privacy by design", "Commit without revealing",
+         "No name, no amount, no diagnosis left the hospital. Four codes and a signature did. A complete "
+         "theft of the registry reveals nothing about any patient."),
+    ]
+    st.markdown("**Techniques used at issue** · no AI on this screen, by design")
+    html = ['<table class="tl-table tl-tech"><tr><th>Technique</th><th>What it is</th><th>What happened here</th></tr>']
+    for name, kw, what in rows:
+        html.append(f'<tr><td><div class="k">{name}</div></td><td>{kw}</td><td>{what}</td></tr>')
+    html.append("</table>")
+    st.markdown("".join(html), unsafe_allow_html=True)
+
+
+def customer_reading_box(r: LadderResult, documents: list[dict]) -> None:
+    """How the customer's documents were read: the one technical thing a customer is
+    told. The reading step only: which reader, the language, the lowest confidence, the
+    second reader, and that they confirmed. Never the findings, thresholds of the rule or
+    the verdict, which would coach a forger."""
+    from trustladder.packet import SummaryResult
+    items = [("Bill", r.read_report or {}, r.read_status.value, r.models_used.get("reader"))]
+    for d in documents:
+        j = SummaryResult.from_json(json.loads(d["result_json"]))
+        items.append(("Discharge summary", j.read_report or {}, j.read_status.value, j.models_used.get("reader")))
+    st.markdown("**How your documents were read**")
+    html = ['<table class="tl-table tl-tech"><tr><th>Document</th><th>Reader</th><th>What it read</th></tr>']
+    for label, rep, status, model in items:
+        if rep.get("source") == "vision model":
+            who = f'<div class="k">Vision model</div><div class="kw">{model or rep.get("model") or "hosted"}</div>'
+            conf = rep.get("confidence") or {}
+            bits = [f"printed in {rep['language']}" if rep.get("language") else "language not stated"]
+            if conf:
+                bits.append(f"lowest field confidence {min(conf.values()):.2f} (every field must reach 0.70 or you are asked to complete it)")
+            if rep.get("second_reader"):
+                agree = rep.get("agree")
+                bits.append("a second reader " + ("agreed" if agree else "did not agree" if agree is False else "gave no opinion"))
+            else:
+                bits.append("no second reader on this server")
+            if rep.get("customer_confirmed"):
+                n = int(rep.get("corrections") or 0)
+                bits.append("you confirmed the details" + (f" and corrected {n} field{'s' if n != 1 else ''}" if n else ""))
+            what = "; ".join(bits) + "."
+        elif rep.get("source", "text layer") == "text layer" or not rep:
+            who = '<div class="k">Text layer</div><div class="kw">no model needed</div>'
+            what = ("Read exactly from the PDF's own text." if status == "Read"
+                    else "The PDF's text could not be read in full.")
+        else:
+            who = f'<div class="k">{rep.get("source", "Reader")}</div>'
+            what = status
+        html.append(f"<tr><td>{label}</td><td>{who}</td><td>{what}</td></tr>")
+    html.append("</table>")
+    st.markdown("".join(html), unsafe_allow_html=True)
+    st.caption("In this demo a photograph is read by a hosted model and the bill is synthetic; in the product "
+               "the reader runs inside the insurer. What the insurer concluded is not shown here: it goes to "
+               "the claims officer.")
+
+
 def packet_panel(documents: list[dict]) -> None:
     """The claim packet's other document, the discharge summary: what it says, what the
     hospital's record says about it, and how it was read."""

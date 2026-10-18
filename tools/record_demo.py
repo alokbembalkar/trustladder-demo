@@ -201,6 +201,7 @@ def main() -> None:
         pg.get_by_role("button", name="Issue bill and discharge summary, and publish").click()
         settle(pg)
         expect_text(pg, "with discharge summary", "bill and discharge summary issued and published")
+        expect_text(pg, "Techniques used at issue", "step 1: the techniques box (ticket, scrypt, Ed25519, privacy)")
         with pg.expect_download() as d1:
             pg.get_by_role("button", name="Download the bill (PDF)").click()
         genuine = Path(BUILD / "demo_files" / d1.value.suggested_filename)

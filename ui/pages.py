@@ -142,6 +142,8 @@ def hospital_issue(ctx: Ctx) -> None:
             st.download_button("Download the discharge summary (PDF)", spdf,
                                f"{summary.summary_no.replace('/', '_')}.pdf", mime="application/pdf",
                                key="h_dl_summary")
+        st.write("")
+        C.hospital_techniques(bill, summary)
 
 
 def hospital_my_bills(ctx: Ctx) -> None:
@@ -395,6 +397,8 @@ def customer_submit(ctx: Ctx) -> None:
         # the stage ladder. See components.claim_receipt for why.
         C.claim_receipt(c["status"], c["pdf"], CUSTOMER_TEXT[c["status"]], c["file_name"],
                         attachments=[(d["file_name"], d["data"]) for d in attached])
+        st.write("")
+        C.customer_reading_box(result_from_json(json.loads(c["result_json"])), attached)
 
 
 # ==========================================================================

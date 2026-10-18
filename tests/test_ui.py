@@ -1127,3 +1127,68 @@ def test_tc81_officer_sees_the_techniques_used_on_the_claim():
         assert needed in texts, needed
     assert "Not used: a born-digital PDF needs no model" in texts
     assert "R2: Tampered" in texts or "R3: Tampered" in texts
+
+
+def test_tc82_hospital_sees_the_techniques_used_at_issue():
+    """TC-82. Steps: hospital → Issue a bill; press the issue button. Expected: under the
+    download buttons, 'Techniques used at issue' with the random ticket (both tickets
+    named, 2⁷⁹), the scrypt hash commitment (N = 2¹³, two 32-byte codes), the Ed25519
+    signature and privacy by design; the box says there is no AI on this screen."""
+    at = _login("hospital")
+    at.button(key="h_issue").click().run()
+    texts = _texts(at)
+    assert "Techniques used at issue" in texts and "no AI on this screen" in texts
+    import re
+    m = re.search(r"Issued (\S+) for .*?ticket \*\*(\S+)\*\*, with discharge summary (\S+), ticket \*\*(\S+)\*\*",
+                  " ".join(x.value for x in at.success))
+    assert m, "the success line names both tickets"
+    assert m.group(2) in texts and m.group(4) in texts, "both tickets appear in the techniques box"
+    for needed in ("Random ticket", "2⁷⁹", "Hash commitment", "N = 2¹³", "32-byte", "Digital signature", "Ed25519",
+                   "Privacy by design", "No name, no amount, no diagnosis"):
+        assert needed in texts, needed
+
+
+def _jpeg() -> bytes:
+    """A real 8x8 JPEG, for a claim that arrives as a picture."""
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 8), (240, 236, 228)).save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+def test_tc83_customer_sees_how_the_documents_were_read_and_nothing_about_the_verdict():
+    """TC-83. Steps: as if just submitted, show the customer (a) a text-layer claim with its
+    summary, (b) a claim read from a picture by a stubbed vision model in Marathi, confirmed
+    with one correction. Expected: 'How your documents were read' lists each document with
+    its reader: (a) 'Text layer', 'no model needed', 'Read exactly'; (b) 'Vision model' with
+    the model's name, 'printed in Marathi', the lowest confidence and the 0.70 line, 'no
+    second reader', 'you confirmed the details and corrected 1 field'. In both: no verdict
+    word, no finding, no screening threshold, nothing from the officer's panel."""
+    from trustladder import vision
+    from trustladder.cases import SUMMARY_FOR_BILL_1
+    from trustladder.models import BillFields, ReadStatus
+    store, verifier = _store(), Verifier(RegistryStore(DATA_DIR))
+    ds1 = store.summary_pdf(SUMMARY_FOR_BILL_1.summary_no)
+    a = submit_claim(store, verifier, "CUST-001", (DATA_DIR / "showcase" / "01_genuine_bill.pdf").read_bytes(), "01.pdf",
+                     attachments=[(ds1, "ds1.pdf", None)])
+    f = BillFields("IN-HOSP-SAHYOG-PUN-0101", "Sahyog", "SMH/2026/004877", "2026-03-05", "Meera Kulkarni",
+                   [], 10365000, "SH-WTKU-SZUF-7M7G-ARRC")
+    reading = vision.Reading(ReadStatus.OK, f, "read", source="vision model", model="stub-vision",
+                             confidence={"total": 0.88, "ticket": 0.99}, language="Marathi",
+                             customer_confirmed=True, corrections=1)
+    b = submit_claim(store, verifier, "CUST-001", _jpeg(), "photo.jpg", reading=reading)
+    for claim_id, expect in ((a, ("Text layer", "no model needed", "Read exactly", "Discharge summary")),
+                             (b, ("Vision model", "stub-vision", "printed in Marathi", "0.88", "0.70",
+                                  "no second reader", "you confirmed the details and corrected 1 field"))):
+        at = _login("customer")
+        at.session_state["cs_last"] = claim_id
+        at = _go(at, "customer", "Submit a claim")
+        at.run()
+        texts = _texts(at)
+        assert "How your documents were read" in texts
+        for needed in expect:
+            assert needed in texts, (claim_id, needed)
+        for banned in ("Techniques used on this claim", "0.60", "Policy-as-code", "What was found", "Tampered",
+                       "Authentic", "Suspicious", "file history", "Screening model"):
+            assert banned not in texts, (claim_id, banned)

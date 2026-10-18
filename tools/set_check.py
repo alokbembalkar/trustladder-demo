@@ -97,9 +97,13 @@ def main() -> None:
                 fail(f"{folder.name}: customer sees '{status}', expected '{want_status}'")
             # Both documents of the packet must be on the receipt, each named.
             receipt = pg.inner_text("body")
-            for needed in ("Bill", "Discharge summary", bill.name, summary.name):
+            for needed in ("Bill", "Discharge summary", bill.name, summary.name,
+                           "How your documents were read", "Text layer", "Read exactly"):
                 if needed not in receipt:
                     fail(f"{folder.name}: '{needed}' is not on the customer's receipt")
+            for banned in ("Techniques used on this claim", "0.60", "Tampered", "What was found"):
+                if banned in receipt:
+                    fail(f"{folder.name}: '{banned}' is shown to the customer")
             pg.screenshot(path=str(SHOTS / f"set_{folder.name[0]}_customer.png"), full_page=True)
             print(f"TC-35 pass: {folder.name}: {bill.name[:2]} + {summary.name[:2]} -> customer sees {status}")
             sign_out(pg)
