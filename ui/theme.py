@@ -111,6 +111,10 @@ def apply_css() -> None:
   .tl-read .s {{ color:{MUTED}; font-size:0.86rem; margin-top:2px; }}
   .tl-conf {{ display:inline-block; border-radius:999px; padding:0 8px; font-size:0.72rem; font-weight:700;
              color:white; margin-left:6px; vertical-align:middle; }}
+  .tl-doc {{ margin:0 0 10px 0; }}
+  .tl-doc img {{ width:100%; display:block; border:1px solid #E2E8F0; border-radius:6px;
+                 box-shadow:0 1px 3px rgba(15,23,42,0.08); background:#fff; }}
+  .tl-doc figcaption {{ font-size:0.8rem; color:{MUTED}; text-align:center; margin-top:4px; }}
   .tl-table {{ width:100%; border-collapse:collapse; font-size:0.84rem; }}
   .tl-table th {{ text-align:left; border-bottom:1px solid #CBD5E1; padding:6px 6px; color:{MUTED};
                  font-size:0.76rem; text-transform:uppercase; letter-spacing:0.3px; }}

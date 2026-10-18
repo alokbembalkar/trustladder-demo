@@ -7,7 +7,9 @@ presenter.
 
 from __future__ import annotations
 
+import base64
 import dataclasses
+import io
 import json
 from pathlib import Path
 
@@ -24,17 +26,52 @@ ARCH = json.loads((Path(__file__).resolve().parent.parent / "trustladder" / "arc
 
 
 @st.cache_data(show_spinner=False)
-def preview_png(pdf_bytes: bytes):
-    """First page of a PDF as an image (top part, where the bill is)."""
-    page = pdfium.PdfDocument(pdf_bytes)[0]
-    img = page.render(scale=1.15).to_pil()
-    return img.crop((0, 0, img.width, int(img.height * 0.64)))
+def page_image(data: bytes, file_name: str) -> tuple[bytes, str]:
+    """A document as one picture: a photo as it is, a PDF's first page rendered whole.
+
+    Rendered at twice the nominal size so the small print of a bill stays legible when
+    the picture is shown at column width; saved as JPEG so the page stays light.
+    """
+    from trustladder.vision import mime_of
+    mime = mime_of(file_name)
+    if mime:
+        return data, mime
+    try:
+        page = pdfium.PdfDocument(data)[0]
+        img = page.render(scale=2.0).to_pil().convert("RGB")
+    except Exception:
+        return b"", ""
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=88)
+    return buf.getvalue(), "image/jpeg"
+
+
+def document_view(data: bytes, file_name: str, caption: str = "") -> None:
+    """Show a document, whole, at the width of the column it sits in.
+
+    The picture is embedded in the page itself (a data URI) rather than served from
+    Streamlit's media cache: on the hosted free tier that cache can drop a file between
+    two reruns, and the customer was left with an empty frame where the bill should be.
+    An embedded picture cannot go missing. Nothing is cropped: a reader sees the whole
+    page, including the total at the bottom of a bill.
+    """
+    img, mime = page_image(data, file_name)
+    if not img:
+        st.warning(f"`{file_name}` could not be shown as a picture.")
+        return
+    b64 = base64.b64encode(img).decode("ascii")
+    cap = f"<figcaption>{caption}</figcaption>" if caption else ""
+    st.markdown(f'<figure class="tl-doc"><img src="data:{mime};base64,{b64}" alt="{caption or file_name}">{cap}'
+                f'</figure>', unsafe_allow_html=True)
 
 
 def preview_any(data: bytes, file_name: str):
-    """A picture is shown as it is; a PDF is rendered. Same call either way."""
+    """A picture as it is, or a PDF's first page as a PIL image (for callers that need bytes
+    or an image object rather than a screen element)."""
     from trustladder.vision import mime_of
-    return data if mime_of(file_name) else preview_png(data)
+    if mime_of(file_name):
+        return data
+    return pdfium.PdfDocument(data)[0].render(scale=2.0).to_pil()
 
 
 # --------------------------------------------------------------------------
@@ -145,7 +182,7 @@ def packet_panel(documents: list[dict]) -> None:
         st.markdown("**The discharge summary in this packet**")
         col_doc, col_txt = st.columns([2, 3], gap="large")
         with col_doc:
-            st.image(preview_any(d["data"], d["file_name"]), width="stretch")
+            document_view(d["data"], d["file_name"])
         with col_txt:
             tone = REGISTRY_COLOUR.get(j.registry_answer.value, "#475569")
             st.markdown(chip(f"Registry: {j.registry_answer.value}", tone), unsafe_allow_html=True)
@@ -234,11 +271,13 @@ def claim_receipt(status: str, pdf_bytes: bytes, next_step: str, file_name: str 
     with col_doc:
         if attachments:
             cols = st.columns(1 + len(attachments))
-            cols[0].image(preview_any(pdf_bytes, file_name), caption="Bill", width="stretch")
+            with cols[0]:
+                document_view(pdf_bytes, file_name, caption="Bill")
             for col, (name, data) in zip(cols[1:], attachments):
-                col.image(preview_any(data, name), caption="Discharge summary", width="stretch")
+                with col:
+                    document_view(data, name, caption="Discharge summary")
         else:
-            st.image(preview_any(pdf_bytes, file_name), width="stretch")
+            document_view(pdf_bytes, file_name)
     with col_status:
         st.markdown(
             f'<div class="tl-verdict" style="background:{colour}">'
@@ -297,7 +336,7 @@ def verdict_view(r: LadderResult, pdf_bytes: bytes, next_step: str = "", show_gr
     """
     col_doc, col_ladder = st.columns([2, 3], gap="large")
     with col_doc:
-        st.image(preview_any(pdf_bytes, r.file_name), width="stretch")
+        document_view(pdf_bytes, r.file_name)
     with col_ladder:
         verdict_banner(r, next_step or r.queue)
         st.markdown(f'<div class="tl-reason">{plain_reason(r)}</div>', unsafe_allow_html=True)

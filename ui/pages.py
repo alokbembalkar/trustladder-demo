@@ -124,8 +124,8 @@ def hospital_issue(ctx: Ctx) -> None:
                    f"discharge summary {summary.summary_no}, ticket **{summary.ticket}**.")
         p1, p2 = st.columns([2, 3], gap="large")
         with p1:
-            st.image(C.preview_png(pdf), width="stretch")
-            st.image(C.preview_png(spdf), width="stretch")
+            C.document_view(pdf, f"{bill.bill_no}.pdf", caption="Bill")
+            C.document_view(spdf, f"{summary.summary_no}.pdf", caption="Discharge summary")
         with p2:
             st.markdown("**What the registry received:** two scrambled codes per document and the hospital's "
                         "signature. No name, no amount, no diagnosis.")
@@ -326,11 +326,11 @@ def _slot(ctx: Ctx, label: str, key: str, kind: str, help_: str) -> list | None:
     if reading.kind != kind:
         d[2] = reading = vision.Reading(**{**reading.__dict__, "kind": kind})
     if not picture:
-        st.image(C.preview_png(data), width=380)
+        C.document_view(data, up.name)
     else:
         left, right = st.columns([2, 3], gap="large")
         with left:
-            st.image(C.preview_any(data, up.name), width="stretch")
+            C.document_view(data, up.name)
         with right:
             d[3], d[4] = _reading_form(reading, f"rf_{abs(hash(file_key))}")
     return d
