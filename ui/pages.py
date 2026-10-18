@@ -27,7 +27,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from trustladder import crypto, vision
+from trustladder import crypto, model_registry, vision
 from trustladder.cases import HOSPITALS
 from trustladder.models import KIND_SUMMARY, BillFields, DischargeFields, LineItem
 from trustladder.policy import (ALLOWED, COST_PER_HOUR_RS, HOLD, MINUTES_PER_REVIEW, PAY,
@@ -446,6 +446,7 @@ def _claim_detail(ctx: Ctx, claim_id: str) -> None:
     C.reading_line(r)
     C.packet_panel(ctx.store.claim_documents(claim_id))
     C.agent_panel(r, pending=bool(c.get("narrative_pending")))
+    C.techniques_panel(model_registry.techniques_used(r, ctx.store.claim_documents(claim_id)))
 
 
 SORT_ORDERS = ("Newest first", "Longest waiting first", "Worst first")

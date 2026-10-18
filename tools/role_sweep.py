@@ -192,7 +192,9 @@ def main() -> None:
                 fail(f"officer: '{needed}' missing on the opened claim")
         if "discharge summary" not in text.lower():
             fail("officer: the packet's summary line is missing")
-        ok("officer: the queue opens a claim with verdict, findings, reading line, packet line and trace")
+        if "Techniques used on this claim" not in text or "Policy-as-code" not in text:
+            fail("officer: the techniques panel is missing")
+        ok("officer: the queue opens a claim with verdict, findings, reading line, packet line, trace and techniques")
         sign_out(pg)
 
         # ---- risk head: move a menu and put it back

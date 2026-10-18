@@ -169,6 +169,27 @@ def agent_panel(r: LadderResult, pending: bool = False) -> None:
     st.markdown(rows, unsafe_allow_html=True)
 
 
+def techniques_panel(rows: list[dict]) -> None:
+    """Every technique on this claim, in the style of the agent's account: the AI keyword,
+    the model or tool, what it did here, and the threshold with how it is calculated.
+    Techniques that did not apply stay in the list, greyed: what deliberately did not run
+    is part of the explanation."""
+    if not rows:
+        return
+    st.markdown("**Techniques used on this claim**")
+    st.markdown('<div class="tl-who">One row per technique, read off the audit record of this claim: the AI '
+                'concept, the model or tool, what it did here, and the number it applied. Greyed rows did not '
+                'apply to this document, and say why.</div>', unsafe_allow_html=True)
+    html = ['<table class="tl-table tl-tech"><tr><th>Technique</th><th>Model or tool</th>'
+            '<th>On this claim</th><th>Threshold, and how it is calculated</th></tr>']
+    for r in rows:
+        cls = "" if r["used"] else ' class="off"'
+        html.append(f'<tr{cls}><td><div class="k">{r["name"]}</div><div class="kw">{r["keyword"]}</div></td>'
+                    f'<td>{r["tool"]}</td><td>{r["on_claim"]}</td><td>{r["threshold"]}</td></tr>')
+    html.append("</table>")
+    st.markdown("".join(html), unsafe_allow_html=True)
+
+
 def packet_panel(documents: list[dict]) -> None:
     """The claim packet's other document, the discharge summary: what it says, what the
     hospital's record says about it, and how it was read."""

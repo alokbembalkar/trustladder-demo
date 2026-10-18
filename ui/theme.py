@@ -119,6 +119,10 @@ def apply_css() -> None:
   .tl-table th {{ text-align:left; border-bottom:1px solid #CBD5E1; padding:6px 6px; color:{MUTED};
                  font-size:0.76rem; text-transform:uppercase; letter-spacing:0.3px; }}
   .tl-table td {{ vertical-align:top; padding:8px 6px; border-bottom:1px solid #F1F5F9; }}
+  .tl-tech td {{ font-size:0.86rem; }}
+  .tl-tech .k {{ font-weight:700; color:{INK}; white-space:nowrap; }}
+  .tl-tech .kw {{ font-size:0.76rem; color:#7C3AED; font-weight:600; }}
+  .tl-tech tr.off td, .tl-tech tr.off .k, .tl-tech tr.off .kw {{ color:#94A3B8; }}
 </style>""", unsafe_allow_html=True)
 
 

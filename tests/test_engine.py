@@ -1,5 +1,5 @@
 """
-Engine test cases (TC-01 .. TC-34).
+Engine test cases (TC-01 .. TC-36).
 
 Each test is one formal test case: its docstring states the steps and the
 expected result. These cover the verdicts, the reasons and the registry; the
@@ -884,3 +884,47 @@ def test_tc34_the_bilingual_marathi_documents_read_exactly_and_the_raised_copy_i
     assert cb["verdict"] == "Tampered" and cb["status"] == "On hold", (cb["verdict"], cb["status"], cb["reason"])
     assert cb["rule"].startswith("R2"), "the issuer contradicts the raised copy: proof, not a hint"
     assert "incremental_saves" in cb["result_json"] and "QuickEdit" in cb["reason"]
+
+
+# ---------------------------------------------------------------- the techniques panel (TC-36)
+
+def test_tc36_techniques_used_are_read_off_the_claims_own_record():
+    """TC-36. Steps: build the techniques rows for (a) the edited showcase bill submitted
+    with the models off, (b) a stubbed picture reading that the issuer contradicts
+    uncorroborated. Expected: twelve rows every time, each with a keyword, a tool, what
+    happened on this claim and a threshold; (a) text-layer reading used, vision and
+    corroboration greyed, screening model used with its score, registry Mismatch, rule R2,
+    agent and reason writer greyed; (b) vision reading used with the model's name and the
+    0.70 gate, corroboration row says not corroborated, rule R7."""
+    import tempfile
+    from trustladder import model_registry, vision
+    from trustladder.service import submit_claim
+    from trustladder.store import Store, result_from_json
+    verifier = Verifier(RegistryStore(DATA_DIR))
+    store = Store(Path(tempfile.mkdtemp()) / "t.db"); store.add_customer("C1", "Meera Kulkarni", "Pune")
+    cid = submit_claim(store, verifier, "C1", (DATA_DIR / "showcase" / "02_same_bill_total_raised.pdf").read_bytes(), "02.pdf")
+    r = result_from_json(json.loads(store.claim(cid)["result_json"]))
+    rows = model_registry.techniques_used(r, [])
+    assert len(rows) == 12 and all(row["keyword"] and row["tool"] and row["on_claim"] and row["threshold"] for row in rows)
+    by = {row["name"]: row for row in rows}
+    assert by["Text-layer reading"]["used"] and "exactly" in by["Text-layer reading"]["on_claim"]
+    assert not by["Vision-language reading"]["used"] and "0.70" in by["Vision-language reading"]["threshold"]
+    assert not by["Corroboration (rule R7)"]["used"]
+    assert by["Screening model"]["used"] and "p = " in by["Screening model"]["on_claim"] and "0.60" in by["Screening model"]["threshold"]
+    assert by["Registry proof"]["on_claim"].startswith("Mismatch")
+    assert by["Policy-as-code"]["on_claim"].startswith("R2: Tampered")
+    assert not by["Evidence agent"]["used"] and not by["Reason writer"]["used"]
+
+    # (b) a picture the issuer contradicts, read by a stubbed model, nobody corroborating
+    f = BillFields("IN-HOSP-SAHYOG-PUN-0101", "Sahyog", "SMH/2026/004877", "2026-03-05", "Meera Kulkarni",
+                   [], 11365000, "SH-WTKU-SZUF-7M7G-ARRC")
+    reading = vision.Reading(ReadStatus.OK, f, "read", source="vision model", model="stub-vision",
+                             confidence={"total": 0.91, "ticket": 0.99}, language="Marathi", customer_confirmed=True)
+    cid2 = submit_claim(store, verifier, "C1", _jpeg(), "photo.jpg", reading=reading)
+    r2 = result_from_json(json.loads(store.claim(cid2)["result_json"]))
+    by2 = {row["name"]: row for row in model_registry.techniques_used(r2, [])}
+    assert by2["Vision-language reading"]["used"] and "stub-vision" in by2["Vision-language reading"]["on_claim"]
+    assert "0.91" in by2["Vision-language reading"]["on_claim"] and "Marathi" in by2["Vision-language reading"]["on_claim"]
+    assert not by2["Text-layer reading"]["used"]
+    assert "not corroborated" in by2["Corroboration (rule R7)"]["on_claim"]
+    assert by2["Policy-as-code"]["on_claim"].startswith("R7")

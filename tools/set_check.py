@@ -128,6 +128,9 @@ def main() -> None:
                     fail(f"{folder.name}: the Marathi bill number is not on the officer's screen")
                 if "QuickEdit" not in body:
                     fail(f"{folder.name}: the file-history evidence is not on the officer's screen")
+                for needed in ("Techniques used on this claim", "Policy-as-code", "Supervised learning", "0.70"):
+                    if needed not in body:
+                        fail(f"{folder.name}: '{needed}' is missing from the techniques panel")
                 print(f"TC-35 pass: {folder.name}: officer sees {want_verdict}, patient named, packet line and file history present")
                 pg.screenshot(path=str(SHOTS / f"set_{folder.name[0]}_officer.png"), full_page=True)
             sign_out(pg)

@@ -1109,3 +1109,21 @@ def test_tc80_an_unread_scan_is_not_assumed_to_be_a_bill(monkeypatch):
     read_summary = vision.Reading(ReadStatus.OK, None, "x", source="vision model", kind="discharge summary",
                                   partial={"summary_no": "X"})
     assert _guess_kind([SimpleNamespace(name="bill.jpg"), b"", read_summary, {}, False, True, "k3"]) == "discharge summary"
+
+
+def test_tc81_officer_sees_the_techniques_used_on_the_claim():
+    """TC-81. Steps: open a held claim as the officer. Expected: under the agent's account,
+    'Techniques used on this claim' with one row per technique, the AI keyword, the model or
+    tool, what happened here, and the threshold; the vision row greyed as not used on a
+    PDF, the screening row carrying its score, the rule row naming R2 or R3."""
+    held = next(c for c in _queue() if c["status"] == "On hold")
+    at = _login("officer")
+    _open_claim(at, held["claim_id"])
+    texts = _texts(at)
+    assert "Techniques used on this claim" in texts
+    for needed in ("Multimodal LLM, confidence gate", "Supervised learning (logistic regression)",
+                   "Hash commitment, digital signature", "Policy-as-code", "Agentic AI, tool calling",
+                   "Grounded LLM with a guardrail", "0.70", "0.60"):
+        assert needed in texts, needed
+    assert "Not used: a born-digital PDF needs no model" in texts
+    assert "R2: Tampered" in texts or "R3: Tampered" in texts
