@@ -90,17 +90,17 @@ SAMPLE_PACK = [
     # summary that belongs to it, numbered in the order a presenter picks them up and
     # named with the patient and the hospital so nothing on screen needs decoding.
     ("01_genuine_bill.pdf", "01 Meera Kulkarni - Sahyog Hospital - bill.pdf",
-     "Genuine bill from a hospital that has joined.", "Paid, with 02"),
+     "Genuine bill from a hospital that has joined.", "Approved, with 02"),
     ("09_discharge_summary_for_bill_1.jpg",
      "02 Meera Kulkarni - Sahyog Hospital - discharge summary for bill 01 (scan).jpg",
-     "The scanned discharge summary for bill 01: same stay, same patient.", "Paid, with 01"),
+     "The scanned discharge summary for bill 01: same stay, same patient.", "Approved, with 01"),
     ("08_marathi_bill_photo.jpg",
      "03 Meera Kulkarni - Sahyog Hospital - bill printed in Marathi (phone photo).jpg",
      "Phone photo of a genuine Sahyog bill printed in Marathi; the vision model reads it in Marathi.",
-     "Paid, with 04"),
+     "Approved, with 04"),
     ("11_discharge_summary_for_marathi_bill.jpg",
      "04 Meera Kulkarni - Sahyog Hospital - discharge summary for bill 03 (scan).jpg",
-     "The scanned discharge summary for the Marathi bill.", "Paid, with 03"),
+     "The scanned discharge summary for the Marathi bill.", "Approved, with 03"),
     ("02_same_bill_total_raised.pdf", "05 Meera Kulkarni - Sahyog Hospital - bill 01 with the total raised.pdf",
      "Bill 01 edited afterwards: same bill number, bigger total. Attach with 02, the genuine summary.",
      "Tampered, held (with 02)"),
@@ -123,10 +123,10 @@ SAMPLE_PACK = [
      "GENUINE: bill 08 with a hospital discount, re-saved by a phone app. Attach with 09.",
      "Suspicious, to a person (with 09): looks edited, is not"),
     ("05_photo_of_arogya_bill.jpg", "12 Meera Kulkarni - Arogya Nursing Home - bill (phone photo).jpg",
-     "Phone photo of her genuine Arogya bill; the vision model reads it.", "Paid, with 13"),
+     "Phone photo of her genuine Arogya bill; the vision model reads it.", "Approved, with 13"),
     ("14_discharge_summary_for_arogya_bill.jpg",
      "13 Meera Kulkarni - Arogya Nursing Home - discharge summary for bill 12 (scan).jpg",
-     "The scanned discharge summary for the Arogya bill.", "Paid, with 12"),
+     "The scanned discharge summary for the Arogya bill.", "Approved, with 12"),
     ("06_made_from_nothing_not_joined.pdf",
      "14 Meera Kulkarni - Shanti Clinic (not joined) - bill the hospital never issued.pdf",
      "A fake from a hospital that has not joined: nothing can be proven either way.", "In review, with 15"),
@@ -366,5 +366,5 @@ if __name__ == "__main__":
     s = build_and_snapshot()
     m = s.measures()
     print(f"Demo world built under {DATA_DIR}: {m['claims']} claims, "
-          f"{m['auto_paid']} paid straight through, {m['open']} open, "
+          f"{m['auto_paid']} approved straight through, {m['open']} open, "
           f"{m['wrongful_holds']} wrongful hold(s). Password for every login: {DEMO_PASSWORD}")

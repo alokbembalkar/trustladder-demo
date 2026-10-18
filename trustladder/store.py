@@ -52,13 +52,13 @@ ROLES = {
 
 # What each action means for the claim, in the words the CUSTOMER sees.
 STATUS_FOR_ACTION = {
-    PAY: "Paid",
+    PAY: "Approved",
     REVIEW: "In review",
     HOLD: "On hold",
     REQUEST: "Waiting for customer",
 }
 OFFICER_DECISIONS = {
-    "release": ("Released for payment", "Paid after review"),
+    "release": ("Released for payment", "Approved after review"),
     "reject": ("Rejected and referred to investigation", "Rejected"),
     "ask_customer": ("Asked the customer for a clearer copy", "Waiting for customer"),
     "ask_issuer": ("Asked the hospital to confirm", "Waiting for hospital"),
@@ -66,8 +66,10 @@ OFFICER_DECISIONS = {
 OPEN_STATUSES = ("In review", "On hold", "Waiting for customer", "Waiting for hospital")
 
 CUSTOMER_TEXT = {
-    "Paid": "Paid. The hospital confirmed your bill, so it was paid straight away.",
-    "Paid after review": "Paid. A claims officer reviewed your bill and released the payment.",
+    # An insurer approves a claim and then pays it; the customer is told the approval, in
+    # the words a letter would use, never "paid straight away".
+    "Approved": "Approved. The hospital confirmed your bill. Payment is being processed.",
+    "Approved after review": "Approved. A claims officer reviewed your bill and released it for payment.",
     "In review": "A claims officer is looking at your bill. You do not need to do anything yet.",
     "On hold": "Your claim is on hold while it is investigated. You will be contacted if anything is needed.",
     "Waiting for customer": "We need a clearer copy of your bill. Please upload the original PDF from the hospital.",
@@ -436,11 +438,11 @@ class Store:
         """
         rows = self.claims()
         n = len(rows)
-        auto_paid = sum(r["status"] == "Paid" for r in rows)
+        auto_paid = sum(r["status"] == "Approved" for r in rows)
         to_person = sum(r["initial_action"] != PAY for r in rows)
         held = [r for r in rows if r["initial_action"] == HOLD]
         wrongful = sum(r["officer_decision"] == OFFICER_DECISIONS["release"][0] for r in held)
-        released_after_review = sum(r["status"] == "Paid after review" for r in rows)
+        released_after_review = sum(r["status"] == "Approved after review" for r in rows)
         rejected = sum(r["status"] == "Rejected" for r in rows)
         open_now = sum(r["status"] in OPEN_STATUSES for r in rows)
         # Sample-data only: ground truth is known for the seeded claims.

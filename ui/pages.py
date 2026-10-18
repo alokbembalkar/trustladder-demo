@@ -177,7 +177,7 @@ def customer_claims(ctx: Ctx) -> None:
     page_title("Your claims", "Where each claim stands, in plain words.")
     claims = ctx.store.claims(customer_id=cid)
     kpis([(str(len(claims)), "claims"),
-          (str(sum(c["status"].startswith("Paid") for c in claims)), "paid"),
+          (str(sum(c["status"].startswith("Approved") for c in claims)), "approved"),
           (str(sum(c["status"] == "Waiting for customer" for c in claims)), "need something from you")])
     st.write("")
     docs = {d["bill_no"]: d for d in ctx.store.documents_of_customer(cid)}
@@ -393,7 +393,8 @@ def customer_submit(ctx: Ctx) -> None:
                     f"you uploaded `{c['file_name']}`{extra}", unsafe_allow_html=True)
         # The customer sees the STATUS of their claim, never the verdict, the findings or
         # the stage ladder. See components.claim_receipt for why.
-        C.claim_receipt(c["status"], c["pdf"], CUSTOMER_TEXT[c["status"]], c["file_name"])
+        C.claim_receipt(c["status"], c["pdf"], CUSTOMER_TEXT[c["status"]], c["file_name"],
+                        attachments=[(d["file_name"], d["data"]) for d in attached])
 
 
 # ==========================================================================
@@ -488,13 +489,13 @@ def officer_inbox(ctx: Ctx) -> None:
     before seeing what was waiting. Now it lists what is pending, like any work queue,
     and the verdict and the evidence appear only once a claim is chosen.
     """
-    page_title("Claims inbox", "Only the claims that could not be proven. Proven claims are paid without you.")
+    page_title("Claims inbox", "Only the claims that could not be proven. Proven claims are approved without you.")
     order = st.session_state.get("inbox_sort", SORT_ORDERS[0])
     open_claims = _open_claims(ctx, order)
     m = ctx.store.measures()
     kpis([(str(len(open_claims)), "waiting for you"),
           (str(sum(c["status"] == "On hold" for c in open_claims)), "on hold (possible fraud)"),
-          (str(m["auto_paid"]), "paid automatically on proof")])
+          (str(m["auto_paid"]), "approved automatically on proof")])
     st.write("")
 
     just_done = st.session_state.pop("officer_done", None)
@@ -545,7 +546,7 @@ def officer_inbox(ctx: Ctx) -> None:
             st.session_state.officer_open = c["claim_id"]
             st.rerun()
     st.caption(f"{len(open_claims)} claims are waiting. Everything else was settled without a person: "
-               f"{m['auto_paid']} paid on the issuer's proof.")
+               f"{m['auto_paid']} approved on the issuer's proof.")
     _decided_recently(ctx)
 
 
@@ -598,10 +599,10 @@ def risk_dashboard(ctx: Ctx) -> None:
                "Nothing on this line is a projection.")
     held_word = "customer" if m["wrongful_holds"] == 1 else "customers"
     kpis([(f"{m['straight_through_pct']}%",
-           f"paid automatically on the issuer's proof<br>{m['auto_paid']} of {m['claims']} claims, "
+           f"approved automatically on the issuer's proof<br>{m['auto_paid']} of {m['claims']} claims, "
            f"no officer involved"),
           (f"{m['rejected']} of {m['sample_frauds']}",
-           f"known frauds rejected after review<br>{m['sample_frauds_paid']} were paid automatically"),
+           f"known frauds rejected after review<br>{m['sample_frauds_paid']} were approved automatically"),
           (f"{m['wrongful_holds']}",
            f"honest {held_word} wrongly held<br>genuine bills stopped by the rule, then released"),
           (f"{m['readings_corrected']} of {m['picture_claims']}",
@@ -629,7 +630,7 @@ def risk_dashboard(ctx: Ctx) -> None:
     r = route(verdicts, policy)
     st.markdown(
         f'<div class="tl-reason"><b>With this setting, this month\'s {len(verdicts)} claims would go:</b> '
-        f'{r[PAY]} paid automatically · {r[REVIEW]} to a person · {r[HOLD]} held and investigated · '
+        f'{r[PAY]} approved automatically · {r[REVIEW]} to a person · {r[HOLD]} held and investigated · '
         f'{r[REQUEST]} sent back for a clearer copy.</div>', unsafe_allow_html=True)
     st.caption("Move one menu and watch that line. Sending more to a person catches more, and costs "
                "officer time and delays honest customers; sending less does the opposite. "
@@ -645,10 +646,10 @@ def risk_dashboard(ctx: Ctx) -> None:
         scenario = st.radio("Hospitals joined", list(sim["results"]), index=1, key="scenario", horizontal=True)
         rows = sim["results"][scenario]
         tl, base = evaluate(rows, policy), baseline(rows)
-        kpis([(f"{tl['straight_through_pct']}%", "paid automatically on proof"),
-              (f"{tl['fraud_paid']} of {tl['fraud_total']}", "frauds paid automatically by TrustLadder"),
+        kpis([(f"{tl['straight_through_pct']}%", "approved automatically on proof"),
+              (f"{tl['fraud_paid']} of {tl['fraud_total']}", "frauds approved automatically by TrustLadder"),
               (f"{base['fraud_paid']} of {base['fraud_total']}",
-               f"frauds paid by an edit-detection tool,<br>which also holds "
+               f"frauds approved by an edit-detection tool,<br>which also holds "
                f"{base['genuine_held']} honest customers")])
         st.caption("Synthetic month; the mix (about 10% fraud, 8% photos, 8% re-saved files) is our "
                    f"assumption. Officer time assumed at {MINUTES_PER_REVIEW} minutes per case at "
@@ -722,7 +723,7 @@ def auditor_trail(ctx: Ctx) -> None:
                                       "claim_id": "Claim", "detail": "Detail"}),
                  hide_index=True, width="stretch", height=430)
     m = ctx.store.measures()
-    st.caption(f"{m['claims']} claims · {m['auto_paid']} paid on proof · {m['released_after_review']} "
+    st.caption(f"{m['claims']} claims · {m['auto_paid']} approved on proof · {m['released_after_review']} "
                f"released after review · {m['rejected']} rejected · {m['wrongful_holds']} wrongful hold(s).")
     st.download_button("Download as CSV", view.to_csv(index=False), "trustladder_audit.csv",
                        mime="text/csv", key="aud_csv")

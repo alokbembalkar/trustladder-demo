@@ -789,7 +789,7 @@ def test_tc31_a_packet_that_does_not_add_up_goes_to_a_person_even_on_a_proven_bi
     a = submit_claim(store, verifier, "C1", (sc / "01_genuine_bill.pdf").read_bytes(), "01.pdf",
                      attachments=[(ds1, "ds1.pdf", None)])
     ca = store.claim(a)
-    assert (ca["verdict"], ca["status"]) == ("Authentic", "Paid")
+    assert (ca["verdict"], ca["status"]) == ("Authentic", "Approved")
     docs = store.claim_documents(a)
     assert len(docs) == 1 and '"registry_answer": "Verified"' in docs[0]["result_json"]
     assert any(e["event"] == "Discharge summary checked" and e["claim_id"] == a for e in store.audit())
@@ -875,7 +875,7 @@ def test_tc34_the_bilingual_marathi_documents_read_exactly_and_the_raised_copy_i
     a = submit_claim(store, verifier, "C1", (samples / "marathi_bill.pdf").read_bytes(), "03.pdf",
                      attachments=[(ds, "04.pdf", None)])
     ca = store.claim(a)
-    assert (ca["verdict"], ca["status"]) == ("Authentic", "Paid"), ca["reason"]
+    assert (ca["verdict"], ca["status"]) == ("Authentic", "Approved"), ca["reason"]
     assert CROSS_DOCUMENT not in ca["result_json"]
     assert '"registry_answer": "Verified"' in store.claim_documents(a)[0]["result_json"]
     b = submit_claim(store, verifier, "C1", (samples / "marathi_bill_total_raised.pdf").read_bytes(), "07.pdf",

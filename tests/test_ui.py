@@ -186,7 +186,7 @@ def test_tc44_hospital_to_customer_to_officer_to_auditor():
     claim_id = submit_claim(store, Verifier(RegistryStore(DATA_DIR)), "CUST-001", pdf,
                             f"{bill_no.replace('/', '_')}.pdf")
     claim = store.claim(claim_id)
-    assert claim["verdict"] == "Authentic" and claim["status"] == "Paid"
+    assert claim["verdict"] == "Authentic" and claim["status"] == "Approved"
     assert claim["bill_no"] == bill_no, "the uploaded claim must link to the bill it came from"
 
     at = _login("customer")
@@ -217,7 +217,7 @@ def test_tc45_customer_sends_clearer_copy():
     sel.set_value(next(o for o in sel.options if "Arogya" in o)).run()
     at.button(key=f"cc_send_{cid}").click().run()
     after = _store().claim(cid)
-    assert after["verdict"] == "Authentic" and after["status"] == "Paid"
+    assert after["verdict"] == "Authentic" and after["status"] == "Approved"
     assert any(e["event"] == "Clearer copy re-submitted" for e in _store().audit())
 
 
@@ -410,7 +410,7 @@ def test_tc54_a_repeat_of_a_proven_bill_is_evidence_not_a_refusal():
                 if f.family == CLAIM_HISTORY], "the first submission has no history against it"
 
     # The verdict is about the document; the money is a separate question.
-    assert first["status"] == "Paid"
+    assert first["status"] == "Approved"
     assert second["initial_action"] == "Human review" and second["status"] == "In review", \
         "nobody is paid twice for one bill without a person looking"
 
@@ -434,8 +434,8 @@ def test_tc62_a_repeat_can_never_be_paid_automatically_under_any_policy():
     pdf = (DATA_DIR / "showcase" / "01_genuine_bill.pdf").read_bytes()
     a = store.claim(submit_claim(store, verifier, "CUST-002", pdf, "a.pdf"))
     b = store.claim(submit_claim(store, verifier, "CUST-002", pdf, "b.pdf"))
-    assert a["status"] == "Paid"
-    assert b["status"] != "Paid", "a repeat is never paid automatically"
+    assert a["status"] == "Approved"
+    assert b["status"] != "Approved", "a repeat is never paid automatically"
 
 
 def test_tc61_a_repeat_of_an_edited_bill_adds_an_independent_line():
@@ -452,7 +452,7 @@ def test_tc61_a_repeat_of_an_edited_bill_adds_an_independent_line():
     edited_pdf = render_altered(bill, bill.total_paise + 5000000, joined=bool(bill.ticket))
     edited = store.claim(submit_claim(store, verifier, "CUST-002", edited_pdf, "bill_edited.pdf"))
 
-    assert genuine["verdict"] == "Authentic" and genuine["status"] == "Paid"
+    assert genuine["verdict"] == "Authentic" and genuine["status"] == "Approved"
     assert edited["verdict"] == "Tampered" and edited["status"] == "On hold"
     assert edited["bill_no"] == genuine["bill_no"], "one bill, two claims, one screen"
     r = result_from_json(json.loads(edited["result_json"]))
@@ -526,7 +526,7 @@ def test_tc57_the_demo_story_follows_one_bill():
     paid = store.claim(submit_claim(store, verifier, "CUST-001", pdf, "bill.pdf"))
     tampered_pdf = render_altered(bill, bill.total_paise + 5000000, joined=True)
     forged = store.claim(submit_claim(store, verifier, "CUST-001", tampered_pdf, "bill_tampered.pdf"))
-    assert paid["verdict"] == "Authentic" and paid["status"] == "Paid"
+    assert paid["verdict"] == "Authentic" and paid["status"] == "Approved"
     assert forged["verdict"] == "Tampered" and forged["status"] == "On hold"
     assert forged["bill_no"] == paid["bill_no"] == bill_no, "one bill, two claims"
     assert forged["issuer_name"] == paid["issuer_name"]
@@ -815,7 +815,7 @@ def test_tc69_the_risk_head_screen_says_the_role_the_job_and_the_consequence():
 
     import re
     def counts(t):
-        m = re.search(r"would go:</b> (\d+) paid automatically · (\d+) to a person · "
+        m = re.search(r"would go:</b> (\d+) approved automatically · (\d+) to a person · "
                       r"(\d+) held and investigated · (\d+) sent back", t)
         assert m, "the routing line is missing or has changed shape"
         return tuple(int(g) for g in m.groups())

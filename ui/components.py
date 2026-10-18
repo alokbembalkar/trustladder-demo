@@ -210,8 +210,12 @@ def verdict_banner(r: LadderResult, next_step: str = "") -> None:
         f'<div class="sub">{next_step or r.queue}</div></div>', unsafe_allow_html=True)
 
 
-def claim_receipt(status: str, pdf_bytes: bytes, next_step: str, file_name: str = "bill.pdf") -> None:
+def claim_receipt(status: str, pdf_bytes: bytes, next_step: str, file_name: str = "bill.pdf",
+                  attachments: list[tuple[str, bytes]] = ()) -> None:
     """What the CUSTOMER sees after submitting a claim: the status, and nothing more.
+
+    `attachments` are the other documents of the packet (name, bytes): the discharge
+    summary is shown beside the bill, so the customer sees that both were received.
 
     A policyholder is never shown the verdict, the findings or the four-stage ladder.
     Two reasons, and the second one matters more.
@@ -228,7 +232,13 @@ def claim_receipt(status: str, pdf_bytes: bytes, next_step: str, file_name: str 
     colour = STATUS_COLOUR.get(status, "#475569")
     col_doc, col_status = st.columns([2, 3], gap="large")
     with col_doc:
-        st.image(preview_any(pdf_bytes, file_name), width="stretch")
+        if attachments:
+            cols = st.columns(1 + len(attachments))
+            cols[0].image(preview_any(pdf_bytes, file_name), caption="Bill", width="stretch")
+            for col, (name, data) in zip(cols[1:], attachments):
+                col.image(preview_any(data, name), caption="Discharge summary", width="stretch")
+        else:
+            st.image(preview_any(pdf_bytes, file_name), width="stretch")
     with col_status:
         st.markdown(
             f'<div class="tl-verdict" style="background:{colour}">'

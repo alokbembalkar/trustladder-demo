@@ -21,10 +21,11 @@ from playwright.sync_api import Page, sync_playwright
 
 URL = next((a for a in sys.argv[1:] if a.startswith("http")), "http://127.0.0.1:8765/")
 SETS = Path(next(a for a in sys.argv[1:] if not a.startswith("http")))
+SHOTS = Path(__file__).resolve().parent.parent / "build" / "set_check"   # screenshots go here, never beside the sets
 PASSWORD = "TrustLadder@2026"
 SLOW = 180000
 # folder prefix -> (status the customer sees, verdict the officer sees)
-EXPECTED = {"1": ("Paid", "Authentic"), "2": ("Paid", "Authentic"),
+EXPECTED = {"1": ("Approved", "Authentic"), "2": ("Approved", "Authentic"),
             "3": ("On hold", "Tampered"), "4": ("On hold", "Tampered")}
 
 
@@ -60,6 +61,7 @@ def main() -> None:
     folders = sorted(p for p in SETS.iterdir() if p.is_dir() and p.name[0] in EXPECTED)
     if len(folders) != 4:
         fail(f"expected four set folders under {SETS}, found {[p.name for p in folders]}")
+    SHOTS.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as p:
         browser = p.chromium.launch(channel="chrome", headless=True)
         pg = browser.new_context(viewport={"width": 1440, "height": 900}).new_page()
@@ -93,16 +95,22 @@ def main() -> None:
                 fail(f"{folder.name}: the customer can see a verdict")
             if status != want_status:
                 fail(f"{folder.name}: customer sees '{status}', expected '{want_status}'")
+            # Both documents of the packet must be on the receipt, each named.
+            receipt = pg.inner_text("body")
+            for needed in ("Bill", "Discharge summary", bill.name, summary.name):
+                if needed not in receipt:
+                    fail(f"{folder.name}: '{needed}' is not on the customer's receipt")
+            pg.screenshot(path=str(SHOTS / f"set_{folder.name[0]}_customer.png"), full_page=True)
             print(f"TC-35 pass: {folder.name}: {bill.name[:2]} + {summary.name[:2]} -> customer sees {status}")
             sign_out(pg)
 
             sign_in(pg, "officer")
             body = pg.inner_text("body")
-            if want_status == "Paid":
+            if want_status == "Approved":
                 # A proven claim is paid without an officer: it must NOT be in the queue.
                 if "Meera Kulkarni" in body.split("Decided recently")[0]:
-                    fail(f"{folder.name}: a paid claim is sitting in the officer's queue")
-                print(f"TC-35 pass: {folder.name}: paid on proof, nothing for the officer")
+                    fail(f"{folder.name}: an approved claim is sitting in the officer's queue")
+                print(f"TC-35 pass: {folder.name}: approved on proof, nothing for the officer")
             else:
                 # Newest first is the default order, so the claim just made is at the top.
                 pg.get_by_role("button", name="Open").first.click()
@@ -121,7 +129,7 @@ def main() -> None:
                 if "QuickEdit" not in body:
                     fail(f"{folder.name}: the file-history evidence is not on the officer's screen")
                 print(f"TC-35 pass: {folder.name}: officer sees {want_verdict}, patient named, packet line and file history present")
-                pg.screenshot(path=str(SETS.parent / f"set_{folder.name[0]}_officer.png"), full_page=True)
+                pg.screenshot(path=str(SHOTS / f"set_{folder.name[0]}_officer.png"), full_page=True)
             sign_out(pg)
         browser.close()
     print("TC-35: all four sets pass")

@@ -21,7 +21,7 @@ VERDICT_COLOUR = {"Authentic": "#15803D", "Suspicious": "#B45309",
 REGISTRY_COLOUR = {"Verified": "#15803D", "Mismatch": "#B91C1C", "Not issued": "#B91C1C",
                    "No record": "#475569",
                    "Not covered": "#475569", "Not asked": "#475569"}
-STATUS_COLOUR = {"Paid": "#15803D", "Paid after review": "#15803D", "In review": "#B45309",
+STATUS_COLOUR = {"Approved": "#15803D", "Approved after review": "#15803D", "In review": "#B45309",
                  "On hold": "#B91C1C", "Waiting for customer": "#475569",
                  "Waiting for hospital": "#475569", "Rejected": "#7F1D1D"}
 

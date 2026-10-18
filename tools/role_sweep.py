@@ -168,8 +168,8 @@ def main() -> None:
         status = pg.locator("[data-testid='tl-claim-status']").last.inner_text().strip()
         if "Tampered" in body(pg) or "data-testid=\"tl-verdict\"" in pg.content():
             fail("customer: a verdict is visible to the customer")
-        if status not in ("Paid", "In review"):
-            fail(f"customer: packet 01+02 came back '{status}'; expected Paid (or In review if bill 01 was claimed before)")
+        if status not in ("Approved", "In review"):
+            fail(f"customer: packet 01+02 came back '{status}'; expected Approved (or In review if bill 01 was claimed before)")
         ok(f"customer: packet 01+02 submitted, status shown = {status}, no verdict shown")
         pg.get_by_text("My claims", exact=True).first.click()
         settle(pg)
@@ -239,7 +239,7 @@ def main() -> None:
         pg.get_by_text("Audit trail", exact=True).first.click()
         settle(pg)
         # The table itself is drawn on a canvas; the summary line under it is text.
-        if "claims ·" not in body(pg) or "paid on proof" not in body(pg):
+        if "claims ·" not in body(pg) or "approved on proof" not in body(pg):
             fail("auditor: the trail's summary line is missing")
         if not pg.get_by_role("button", name="Download as CSV").count():
             fail("auditor: the trail cannot be downloaded")

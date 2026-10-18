@@ -8,10 +8,10 @@ the real browser surface while doing it (test case TC-30).
 The story (signed in as the presenter, who steps through the six screens):
   0  sign in
   1  Hospital      issues a bill; the genuine PDF is downloaded
-  2  Customer      uploads that PDF on the one upload screen: Paid. The customer is
+  2  Customer      uploads that PDF on the one upload screen: Approved. The customer is
                    shown the STATUS of their claim, never the verdict or the findings;
                    then a PHOTO of a bill printed in Marathi: the vision model reads
-                   it, the customer confirms what it read, and it is Paid on the
+                   it, the customer confirms what it read, and it is Approved on the
                    hospital's proof (or, with the hosted models off, sent back for
                    the original: the screen says which reader ran); then, on that
                    SAME screen, the bill is edited in the demo toolkit (the forger's
@@ -248,7 +248,7 @@ def main() -> None:
         print("TC-30 pass: step 2: the customer sees the bill above the Submit button")
         pg.get_by_role("button", name="Submit claim").click()
         settle(pg)
-        expect_claim_status(pg, "Paid", "step 2: the customer's own packet (bill + summary), paid on proof")
+        expect_claim_status(pg, "Approved", "step 2: the customer's own packet (bill + summary), approved on proof")
 
         pg.wait_for_timeout(READ)
         still(pg, "customer_upload")
@@ -302,8 +302,8 @@ def main() -> None:
         pg.get_by_role("button", name="Submit claim").click()
         settle(pg)
         if models_on:
-            expect_claim_status(pg, "Paid", "step 2: a phone photo of a Marathi bill, paid on proof")
-            print("TC-30 pass: step 2: the photo was read by the vision model and paid on the hospital's proof")
+            expect_claim_status(pg, "Approved", "step 2: a phone photo of a Marathi bill, approved on proof")
+            print("TC-30 pass: step 2: the photo was read by the vision model and approved on the hospital's proof")
         else:
             expect_claim_status(pg, "Waiting for customer", "step 2: unread photo sent back for the original")
             print("TC-30 pass: step 2: with models off, the photo is sent back for the original, never judged")

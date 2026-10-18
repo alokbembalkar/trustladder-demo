@@ -235,7 +235,7 @@ def build_svg() -> str:
     s.append(f'<rect x="{vx}" y="494" width="{vw}" height="32" rx="16" fill="white" stroke="{INK}" stroke-width="1.4"/>')
     s.append(_badge(vx + 18, 510, 7))
     s.append(_text(vx + 36, 515, "Verdict + evidence grade + reason:", 12, 800, INK))
-    s.append(_text(vx + 262, 515, "Authentic → paid automatically   ·   all other verdicts → officer",
+    s.append(_text(vx + 262, 515, "Authentic → approved automatically   ·   all other verdicts → officer",
                    11.5, 400, INK))
     s.append(_badge(xs[4] + 2, 207, 8))
 

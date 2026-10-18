@@ -117,7 +117,7 @@ STEPS = [
      "with the same discharge summary in slot 2, and submit.",
      "One screen takes the whole claim packet, and the customer never says which kind of file it is. "
      "The first packet is a bill and a discharge summary, read exactly; the hospital's record confirms "
-     "both and the dates agree, so it is paid at once with no officer involved. The second is a "
+     "both and the dates agree, so it is approved at once with no officer involved. The second is a "
      "photograph of a bill printed in Marathi: a vision model reads it in Marathi, shows the customer "
      "what it read, and the hospital's record confirms it. The third really was edited, and it is held."),
     ("officer", "Claims inbox", "Officer decides",
