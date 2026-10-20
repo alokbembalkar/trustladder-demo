@@ -61,11 +61,30 @@ RETRY_PAUSE_SECONDS = 1       # between a "high demand" answer and the next mode
 DEFAULT_MAX_TOKENS = 4096
 
 
+def mode() -> str:
+    """"on", "reader" or "off": the TRUSTLADDER_MODELS setting.
+
+    "reader" switches the hosted model on for READING pictures only, and leaves the
+    evidence agent and the reason writer on their written fallbacks. The free tier of a
+    Google key allows twenty requests a day per model; a held claim's narration takes
+    several of them (the agent loops over its tools), so on a free key a rehearsal that
+    narrates two or three claims leaves nothing for the photos. Reader-only spends the
+    allowance on the one job that has no written fallback.
+    """
+    v = os.environ.get("TRUSTLADDER_MODELS", "").strip().lower()
+    if v == "off" or not os.environ.get("GEMINI_API_KEY", "").strip():
+        return "off"
+    return "reader" if v == "reader" else "on"
+
+
 def available() -> bool:
     """Is a key configured and are models switched on? Never exposes the key."""
-    if os.environ.get("TRUSTLADDER_MODELS", "").strip().lower() == "off":
-        return False
-    return bool(os.environ.get("GEMINI_API_KEY", "").strip())
+    return mode() != "off"
+
+
+def narrates() -> bool:
+    """May the agent and the reason writer call the model? Only in full "on" mode."""
+    return mode() == "on"
 
 
 # The last failure, kept so the screens can say "on, but the last call failed: quota"
@@ -78,9 +97,10 @@ def status() -> tuple[str, str]:
     """("on" | "off", a short note). The note names the last failure, if any."""
     if not available():
         return "off", "written fallbacks in use"
+    state = "on" if narrates() else "on (reader only)"
     if _LAST_FAILURE["why"]:
-        return "on", f"last call failed at {_LAST_FAILURE['when']}: {_LAST_FAILURE['why']}"
-    return "on", provider_label()
+        return state, f"last call failed at {_LAST_FAILURE['when']}: {_LAST_FAILURE['why']}"
+    return state, provider_label()
 
 
 def _note_failure(why: str) -> None:
@@ -162,6 +182,7 @@ def generate(contents: list[dict], *, system: str = "", json_mode: bool = False,
     payload = json.dumps(body).encode()
 
     last_error = "no model tried"
+    first_error = ""                      # the first model's reason: the one worth showing
     # Two passes over the list: a "high demand" answer is usually gone a few seconds
     # later, and the second pass catches it without waiting long on any one model.
     for attempt in range(2):
@@ -186,14 +207,17 @@ def generate(contents: list[dict], *, system: str = "", json_mode: bool = False,
                 last_error = f"{model}: HTTP {e.code} " + (
                     "quota exceeded (free tier allows 20 requests a day per model)"
                     if e.code == 429 else "high demand" if e.code == 503 else detail[:60])
+                first_error = first_error or last_error
                 if e.code in (429, 503):
                     time.sleep(RETRY_PAUSE_SECONDS * (attempt + 1))
                 continue
             except (urllib.error.URLError, TimeoutError, OSError, ValueError, KeyError) as e:
                 last_error = f"{model}: {type(e).__name__}"
+                first_error = first_error or last_error
                 continue
-    _note_failure(last_error)
-    raise ModelUnavailable(last_error)
+    why = first_error if first_error == last_error else f"{first_error}; fallbacks: {last_error}"
+    _note_failure(why)
+    raise ModelUnavailable(why)
 
 
 def _parse(answer: dict, model: str) -> Reply:

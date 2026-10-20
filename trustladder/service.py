@@ -106,7 +106,7 @@ def submit_claim(store: Store, verifier: Verifier, customer_id: str, pdf: bytes,
         return claim_id
 
     graph = build_evidence(result)
-    pending = llm.available()
+    pending = llm.narrates()              # narration runs only in full "on" mode
     claim_id = store.record_claim(customer_id, customer["name"], file_name, pdf, result,
                                   graph.independent_against, bill_no=bill_no, truth=truth,
                                   submitted_at=submitted_at, actor=actor or customer["name"],

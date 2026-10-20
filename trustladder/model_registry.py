@@ -31,6 +31,7 @@ LOCAL = "inside this app, on the CPU"
 def models() -> list[dict]:
     """The registry, as rows. `active` says whether it can run on this deployment."""
     llm_on = llm.available()
+    narrating = llm.narrates()
     first = llm.MODELS[0]
     rows = [
         {
@@ -82,7 +83,7 @@ def models() -> list[dict]:
             "measured": "Every tool answers from the findings the rule already weighed, so the "
                         "trace cannot disagree with the verdict. A guard runs any tool it skips.",
             "cannot": "Decide, or pronounce a verdict: a case note that names one is dropped.",
-            "active": llm_on,
+            "active": narrating,
         },
         {
             "name": "Reason writer",
@@ -94,7 +95,7 @@ def models() -> list[dict]:
             "measured": "Every draft passes the check-back guard or is replaced by the template; "
                         "the screen says which one you are reading.",
             "cannot": "Change the verdict, add a finding, or mention a rule number.",
-            "active": llm_on,
+            "active": narrating,
         },
     ]
     return rows

@@ -54,8 +54,8 @@ SYSTEM = (
 
 
 def available() -> bool:
-    """Is a model configured and switched on?"""
-    return llm.available()
+    """May the reason writer call the model? Not when the models are off or reader-only."""
+    return llm.narrates()
 
 
 def write(opener: str, verdict: str, rule_text: str, registry_note: str,
@@ -67,7 +67,7 @@ def write(opener: str, verdict: str, rule_text: str, registry_note: str,
     ordinary case for anyone who clones this repository, and the written reason is a
     complete answer on its own.
     """
-    if not llm.available():
+    if not llm.narrates():
         return None
 
     if families:

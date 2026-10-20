@@ -1,5 +1,5 @@
 """
-Engine test cases (TC-01 .. TC-36).
+Engine test cases (TC-01 .. TC-38).
 
 Each test is one formal test case: its docstring states the steps and the
 expected result. These cover the verdicts, the reasons and the registry; the
@@ -546,6 +546,7 @@ def test_tc23_picture_reading_from_the_model_is_normalised_and_gated(monkeypatch
     and the partial values kept for the customer's form."""
     from trustladder import llm, vision
     monkeypatch.setattr(llm, "available", lambda: True)
+    monkeypatch.setattr(llm, "narrates", lambda: True)
     monkeypatch.setattr(vision.ocr, "available", lambda: False)
     clean = {"language_seen": "Marathi", "issuer_name": "सह्योग", "issuer_id": "in-hosp-sahyog-pun-0101",
              "bill_no": "SMH/2026/004877", "bill_date": "2026-03-05", "patient": " Meera  Kulkarni ",
@@ -651,6 +652,7 @@ def test_tc27_the_agent_narrates_but_cannot_decide_and_the_guard_completes_it(mo
     from trustladder import agent, llm
     r = _run("04_genuine_hospital_not_joined.pdf")
     monkeypatch.setattr(llm, "available", lambda: True)
+    monkeypatch.setattr(llm, "narrates", lambda: True)
     script = [
         llm.Reply("", [("ask_registry", {"why": "the issuer settles most claims"})], "stub-agent",
                   {"parts": [{"functionCall": {"name": "ask_registry", "args": {}}}]}),
@@ -928,3 +930,32 @@ def test_tc36_techniques_used_are_read_off_the_claims_own_record():
     assert not by2["Text-layer reading"]["used"]
     assert "not corroborated" in by2["Corroboration (rule R7)"]["on_claim"]
     assert by2["Policy-as-code"]["on_claim"].startswith("R7")
+
+
+# ---------------------------------------------------------------- reader-only mode (TC-38)
+
+def test_tc38_reader_only_mode_reads_pictures_but_never_narrates(monkeypatch):
+    """TC-38. Steps: set TRUSTLADDER_MODELS=reader with a key present; ask the gates;
+    run the agent and the reason writer. Expected: the models count as available (the
+    vision reader may call), narration is off, the status reads 'on (reader only)', the
+    agent returns the rule's fixed order without touching the network, the reason writer
+    returns None, and the registry lists the agent and the writer as inactive."""
+    from trustladder import agent, llm, model_registry, reason_model
+    monkeypatch.setenv("GEMINI_API_KEY", "not-a-real-key")
+    monkeypatch.setenv("TRUSTLADDER_MODELS", "reader")
+    assert llm.mode() == "reader" and llm.available() and not llm.narrates()
+    assert llm.status()[0] == "on (reader only)"
+    monkeypatch.setattr(llm, "generate", lambda *a, **k: (_ for _ in ()).throw(AssertionError("network call")))
+    r = run_ladder((DATA_DIR / "showcase" / "02_same_bill_total_raised.pdf").read_bytes(),
+                   Verifier(RegistryStore(DATA_DIR)), "02.pdf", narrate=False)
+    trace, note, model = agent.investigate(r, [], True)
+    assert trace and all(s.get("by") in ("fixed order", "guard", "rule") or "fixed" in s.get("why", "").lower()
+                         for s in trace) and model == ""
+    assert reason_model.write("x", "Tampered", "rule", "note", []) is None
+    rows = {m["name"]: m for m in model_registry.models()}
+    assert rows["Vision-language reader"]["active"] and not rows["Evidence agent"]["active"] \
+        and not rows["Reason writer"]["active"]
+    monkeypatch.setenv("TRUSTLADDER_MODELS", "on")
+    assert llm.narrates() and llm.status()[0] == "on"
+    monkeypatch.setenv("TRUSTLADDER_MODELS", "off")
+    assert llm.mode() == "off" and not llm.available()

@@ -98,7 +98,7 @@ def investigate(result: LadderResult, earlier_claims: list[dict] | None = None,
     """
     answers = _answers(result, earlier_claims or [], is_pdf)
 
-    if not llm.available():
+    if not llm.narrates():                # off, or reader-only: the rule's fixed order
         return _fixed_order(answers), "", ""
 
     brief = _brief(result, is_pdf)
