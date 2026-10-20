@@ -12,6 +12,8 @@ What it writes, under assets/samples
                                     Marathi: a PDF with a text layer, bilingual labels
     marathi_bill_total_raised.pdf   that PDF with its total raised afterwards in an editor
     marathi_discharge_summary.pdf   the discharge summary for that stay, bilingual
+    marathi_bill_total_raised_photo.jpg   the raised copy photographed on a phone
+    marathi_discharge_summary_scan.jpg    the summary as a scan
 
 Why this exists as a separate tool
 ----------------------------------
@@ -62,6 +64,8 @@ PHOTO = OUT_DIR / "marathi_bill_photo.jpg"
 BILL_PDF = OUT_DIR / "marathi_bill.pdf"
 RAISED_PDF = OUT_DIR / "marathi_bill_total_raised.pdf"
 SUMMARY_PDF = OUT_DIR / "marathi_discharge_summary.pdf"
+RAISED_PHOTO = OUT_DIR / "marathi_bill_total_raised_photo.jpg"     # the forged copy, photographed
+SUMMARY_SCAN = OUT_DIR / "marathi_discharge_summary_scan.jpg"      # the summary, scanned
 
 # How much the forger adds to the Marathi bill's total (Rs 1,03,650 -> Rs 1,53,650).
 RAISE_PAISE = 5_000_000
@@ -240,7 +244,11 @@ def main() -> None:
     summary_at = _dt.datetime.fromisoformat(s.discharged + "T12:45:00")
     SUMMARY_PDF.write_bytes(_set_metadata(render_summary_pdf(s), creator=software, producer=software,
                                           created=summary_at, modified=summary_at))
-    for p in (PHOTO, BILL_PDF, RAISED_PDF, SUMMARY_PDF):
+    # 5. The pictures of the forged copy and of the summary: the vision model's Marathi case
+    #    where the issuer's record disagrees, so corroboration (rule R7) can be shown.
+    RAISED_PHOTO.write_bytes(photo_of(RAISED_PDF.read_bytes(), seed=23))
+    SUMMARY_SCAN.write_bytes(photo_of(SUMMARY_PDF.read_bytes(), seed=24, quality=70))
+    for p in (PHOTO, BILL_PDF, RAISED_PDF, SUMMARY_PDF, RAISED_PHOTO, SUMMARY_SCAN):
         print(f"wrote {p.relative_to(OUT_DIR.parent.parent)} ({p.stat().st_size // 1024} KB)")
 
 

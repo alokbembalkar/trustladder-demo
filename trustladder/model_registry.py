@@ -147,11 +147,14 @@ def techniques_used(r, documents: list | None = None) -> list[dict]:
             "Every lookup field must be found by its printed label; any missing → could not read (R0).", used=False)
         conf = rep.get("confidence") or {}
         low = min(conf.values()) if conf else None
-        what = (f"Read by {rep.get('model') or first}" + (f", printed in {rep['language']}" if rep.get("language") else "")
+        local_only = rep.get("model") == ocr.MODEL_NAME
+        what = ("The hosted model did not answer (quota, outage or no key); the local OCR read what it could and "
+                "the customer completed the rest." if local_only else f"Read by {rep.get('model') or first}" + (f", printed in {rep['language']}" if rep.get("language") else "")
                 + (f"; lowest field confidence {low:.2f}" if low is not None else "")
                 + ("; the customer confirmed" + (f" and corrected {rep.get('corrections')} field(s)" if rep.get("corrections") else ", no corrections")
                    if rep.get("customer_confirmed") else "; not yet confirmed by the customer") + ".")
-        row("Vision-language reading", "Multimodal LLM, confidence gate", f"{rep.get('model') or first} (Google AI Studio)",
+        row("Vision-language reading", "Multimodal LLM, confidence gate",
+            (f"{first} (Google AI Studio): did not answer" if local_only else f"{rep.get('model') or first} (Google AI Studio)"),
             what, f"Model states a confidence 0–1 per field; every lookup field must be ≥ {vision.CONFIDENCE_FLOOR:.2f} "
                   "and the ticket in the printed shape, or the customer completes the form.")
         if rep.get("second_reader"):

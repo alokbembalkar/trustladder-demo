@@ -46,7 +46,11 @@ API = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateC
 
 # Tried in order. The first entry is the one that answered reliably when this was
 # built; the rest are the newer and the lighter models, for when it is saturated.
-MODELS = ["gemini-3.5-flash", "gemini-3.8-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"]
+# Fastest first. Measured on 20 Oct 2026 with the demo's key: gemini-3.1-flash-lite answers in
+# about 9 s; gemini-3.5-flash returned no text; gemini-3.8-flash and gemini-flash-latest timed
+# out at 60 s. With the lite model last, every reading waited two minutes for the fallbacks
+# and the customer's screen fell back to the local OCR. The others stay as fallbacks.
+MODELS = ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.8-flash", "gemini-flash-latest"]
 
 TIMEOUT_SECONDS = 40          # one request; a bill image read takes 5-8 s in practice
 RETRY_PAUSE_SECONDS = 1       # between a "high demand" answer and the next model

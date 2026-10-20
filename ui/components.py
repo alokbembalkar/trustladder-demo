@@ -16,7 +16,7 @@ from pathlib import Path
 import pypdfium2 as pdfium
 import streamlit as st
 
-from trustladder import evidence, llm, model_registry, screener
+from trustladder import evidence, llm, model_registry, ocr, screener
 from trustladder.decide import RULE_TEXT
 from trustladder.models import LadderResult
 
@@ -231,7 +231,11 @@ def customer_reading_box(r: LadderResult, documents: list[dict]) -> None:
     st.markdown("**How your documents were read**")
     html = ['<table class="tl-table tl-tech"><tr><th>Document</th><th>Reader</th><th>What it read</th></tr>']
     for label, rep, status, model in items:
-        if rep.get("source") == "vision model":
+        if rep.get("source") == "vision model" and rep.get("model") == ocr.MODEL_NAME:
+            who = '<div class="k">Local OCR</div><div class="kw">the hosted model did not answer</div>'
+            what = ("A local text-recognition model read what it could and you completed the rest"
+                    + (f"; you corrected {rep.get('corrections')} field(s)" if rep.get("corrections") else "") + ".")
+        elif rep.get("source") == "vision model":
             who = f'<div class="k">Vision model</div><div class="kw">{model or rep.get("model") or "hosted"}</div>'
             conf = rep.get("confidence") or {}
             bits = [f"printed in {rep['language']}" if rep.get("language") else "language not stated"]
