@@ -180,7 +180,7 @@ def main() -> None:
         # 3. Officer
         sign_in(pg, "officer")
         caption(pg, "The claims officer. A work queue, not an answer: only what could not be proven is here. "
-                    "The four approved claims never reached a person.", LONG)
+                    "The two approved claims never reached a person.", LONG)
         pg.get_by_role("button", name="Open").first.click()
         pg.wait_for_selector("[data-testid='tl-verdict']", timeout=SLOW)
         settle(pg)
